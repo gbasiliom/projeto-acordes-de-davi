@@ -1,14 +1,80 @@
-import React, { useState, useEffect } from 'react';
-import { BookOpen, Calendar, Clock, Music, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc, runTransaction } from 'firebase/firestore';
+
+// E-mail que tem acesso de administrador. Todo outro login vira "aluno".
+const ADMIN_EMAIL = 'auladeinstrumentosmusicais2026@gmail.com';
 
 const LOCALIZACOES = [
   { id: 'saoluiz', nome: 'São Luiz', descricao: 'Aulas quinzenais — Violão às sextas, Bateria aos sábados.' },
   { id: 'matafria', nome: 'Mata Fria / Penha do Côco', descricao: 'Bateria pela manhã e Violão à tarde, conforme a agenda de São Luiz.' },
   { id: 'chale', nome: 'Chalé', descricao: 'Aulas de Violão aos domingos (quinzenal).' }
 ];
+
+const INSTRUMENTOS = [
+  { id: 'violao', nome: 'Turma de Violão', Icone: Guitar },
+  { id: 'bateria', nome: 'Turma de Bateria', Icone: Music }
+];
+
+// --- Horários por polo ---
+const HORARIOS_SAO_LUIZ = [
+  { label: '08:00 - 08:40', value: '08:00' }, { label: '08:40 - 09:20', value: '08:40' },
+  { label: '09:20 - 10:00', value: '09:20' }, { label: '10:00 - 10:40', value: '10:00' },
+  { label: '10:40 - 11:20', value: '10:40' }, { label: '11:20 - 12:00', value: '11:20' },
+  { label: '12:00 - 12:40', value: '12:00' }, { label: '12:40 - 13:20', value: '12:40' }
+];
+const HORARIOS_MATAFRIA_QUARTA = [
+  { label: '07:00 - 07:40', value: '07:00' }, { label: '07:40 - 08:20', value: '07:40' },
+  { label: '08:20 - 09:00', value: '08:20' }, { label: '09:00 - 09:40', value: '09:00' },
+  { label: '09:40 - 10:20', value: '09:40' }, { label: '10:20 - 11:00', value: '10:20' },
+  { label: '11:00 - 11:40', value: '11:00' }
+];
+const HORARIOS_MATAFRIA_SABADO_MANHA = [
+  { label: '08:00 - 08:40', value: '08:00' }, { label: '08:40 - 09:20', value: '08:40' },
+  { label: '09:20 - 10:00', value: '09:20' }, { label: '10:00 - 10:40', value: '10:00' },
+  { label: '10:40 - 11:20', value: '10:40' }, { label: '11:20 - 12:00', value: '11:20' }
+];
+const HORARIOS_MATAFRIA_SABADO_TARDE_A = [
+  { label: '14:00 - 14:40', value: '14:00' }, { label: '14:40 - 15:20', value: '14:40' },
+  { label: '15:20 - 16:00', value: '15:20' }, { label: '16:00 - 16:40', value: '16:00' }
+];
+const HORARIOS_MATAFRIA_SABADO_TARDE_B = [
+  { label: '13:00 - 13:40', value: '13:00' }, { label: '13:40 - 14:20', value: '13:40' },
+  { label: '14:20 - 15:00', value: '14:20' }, { label: '15:00 - 15:40', value: '15:00' },
+  { label: '15:40 - 16:20', value: '15:40' }, { label: '16:20 - 17:00', value: '16:20' }
+];
+const HORARIOS_CHALE = [
+  { label: '11:00 - 11:40', value: '11:00' }, { label: '11:40 - 12:20', value: '11:40' },
+  { label: '12:55 - 13:35', value: '12:55' }, { label: '13:35 - 14:15', value: '13:35' },
+  { label: '14:15 - 14:55', value: '14:15' }
+];
+
+// Matriz de vagas: cada combinação polo + instrumento + dia tem sua própria grade de horários
+const DEFINICOES_VAGAS = [
+  { local: 'saoluiz', instrumento: 'violao', dia: 'Sexta (Quinzenal)', horarios: HORARIOS_SAO_LUIZ },
+  { local: 'saoluiz', instrumento: 'bateria', dia: 'Sábado (Quinzenal - Semana A)', horarios: HORARIOS_SAO_LUIZ },
+  { local: 'matafria', instrumento: 'bateria', dia: 'Quarta-feira', horarios: HORARIOS_MATAFRIA_QUARTA },
+  { local: 'matafria', instrumento: 'bateria', dia: 'Sábado (Quinzenal - Semana B)', horarios: HORARIOS_MATAFRIA_SABADO_MANHA },
+  { local: 'matafria', instrumento: 'violao', dia: 'Sábado (Tarde - Semana A)', horarios: HORARIOS_MATAFRIA_SABADO_TARDE_A },
+  { local: 'matafria', instrumento: 'violao', dia: 'Sábado (Tarde - Semana B)', horarios: HORARIOS_MATAFRIA_SABADO_TARDE_B },
+  { local: 'chale', instrumento: 'violao', dia: 'Domingo (Quinzenal)', horarios: HORARIOS_CHALE }
+];
+
+// Materiais de estudo — placeholder até haver arquivos reais vinculados
+const MATERIAIS = {
+  violao: [
+    { titulo: 'Acordes Básicos C, D, G', tipo: 'PDF' },
+    { titulo: 'Exercício de Dedilhado 1', tipo: 'Vídeo' },
+    { titulo: 'Escala Maior - Shape 1', tipo: 'PDF' }
+  ],
+  bateria: [
+    { titulo: 'Virada Simples 4x4', tipo: 'Vídeo' },
+    { titulo: 'Coordenação Mão/Pé - Exercício 1', tipo: 'PDF' },
+    { titulo: 'Ritmo Básico de Rock', tipo: 'Vídeo' }
+  ]
+};
 
 const firebaseConfig = {
   apiKey: "AIzaSyDmT6qtTaCYAmYpCiZWQMPavmGE9wSmqlo",
@@ -26,10 +92,11 @@ const db = getFirestore(app);
 
 export default function App() {
   const [agendamentos, setAgendamentos] = useState([]);
+  const [vagasOcupadas, setVagasOcupadas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [abaAtiva, setAbaAtiva] = useState('painel');
   const [usuario, setUsuario] = useState(null);
-  
+
   const [emailAdmin, setEmailAdmin] = useState('');
   const [senhaAdmin, setSenhaAdmin] = useState('');
   const [erroLogin, setErroLogin] = useState('');
@@ -41,19 +108,24 @@ export default function App() {
   const [instrumentoCertificado, setInstrumentoCertificado] = useState('Violão');
   const [emitirCertificado, setEmitirCertificado] = useState(false);
 
-  const [novoAgendamento, setNovoAgendamento] = useState({
-    nome: '',
-    telefone: '',
-    local: 'saoluiz',
-    instrumento: 'violao',
-    data: '',
-    horario: '',
-    presenca: false,
-    tipoPagamento: 'pacote',
-    pago: false
-  });
+  // --- Assistente de cadastro e agendamento (aluno) ---
+  const [poloSelecionado, setPoloSelecionado] = useState('');
+  const [instrumentoSelecionado, setInstrumentoSelecionado] = useState('');
+  const [vagaSelecionada, setVagaSelecionada] = useState('');
+  const [dadosAluno, setDadosAluno] = useState({ nome: '', telefone: '', email: '', senha: '' });
+  const [erroAgendamento, setErroAgendamento] = useState('');
+  const [salvandoAgendamento, setSalvandoAgendamento] = useState(false);
+
+  // --- Portal do Aluno (login individual) ---
+  const [emailAluno, setEmailAluno] = useState('');
+  const [senhaAluno, setSenhaAluno] = useState('');
+  const [erroLoginAluno, setErroLoginAluno] = useState('');
+
   const [mensagemSucesso, setMensagemSucesso] = useState('');
   const [mensagemImportacao, setMensagemImportacao] = useState('');
+
+  const souAdmin = !!(usuario && !usuario.isAnonymous && usuario.email === ADMIN_EMAIL);
+  const souAluno = !!(usuario && !usuario.isAnonymous && usuario.email !== ADMIN_EMAIL);
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
@@ -69,6 +141,8 @@ export default function App() {
       }
     });
 
+    // Lista completa de agendamentos — as regras do Firestore garantem que só o admin
+    // recebe todos os documentos; um aluno logado só recebe os próprios.
     const unsubscribe = onSnapshot(collection(db, 'agendamentos'), (snapshot) => {
       const lista = snapshot.docs.map(docItem => ({
         id: docItem.id,
@@ -81,9 +155,17 @@ export default function App() {
       setLoading(false);
     });
 
+    // Coleção pública só com "esse horário está ocupado" — sem nenhum dado do aluno.
+    const unsubVagas = onSnapshot(collection(db, 'vagas'), (snapshot) => {
+      setVagasOcupadas(snapshot.docs.map(d => d.id));
+    }, (error) => {
+      console.error("Erro ao buscar vagas ocupadas:", error);
+    });
+
     return () => {
       unsubAuth();
       unsubscribe();
+      unsubVagas();
     };
   }, []);
 
@@ -101,18 +183,6 @@ export default function App() {
     }
   };
 
-  const loginAutomaticoAdmin = async () => {
-    try {
-      // Pega o primeiro usuário cadastrado no seu auth ou usa o padrão que configurou
-      await signInWithEmailAndPassword(auth, emailAdmin || 'auladeinstrumentos.adm@gmail.com', senhaAdmin || '123456');
-      setAbaAtiva('gerenciar');
-    } catch (err) {
-      console.error("Erro ao logar automático:", err);
-      setErroLogin('Defina seu e-mail e senha corretos uma vez abaixo para salvar.');
-      setAbaAtiva('login');
-    }
-  };
-
   const fazerLogout = async () => {
     try {
       await signOut(auth);
@@ -122,34 +192,118 @@ export default function App() {
     }
   };
 
-  const salvarAgendamento = async (e) => {
+  const fazerLoginAluno = async (e) => {
     e.preventDefault();
-    if (!novoAgendamento.nome) {
-      alert('Por favor, preencha o nome do aluno.');
+    setErroLoginAluno('');
+    try {
+      await signInWithEmailAndPassword(auth, emailAluno, senhaAluno);
+      setAbaAtiva('portal');
+      setEmailAluno('');
+      setSenhaAluno('');
+    } catch (err) {
+      console.error("Erro ao fazer login do aluno:", err);
+      setErroLoginAluno('E-mail ou senha inválidos. Se ainda não tem cadastro, use "Novo Cadastro".');
+    }
+  };
+
+  // Agenda uma vaga: cria (ou reaproveita) a conta do aluno no Firebase Auth,
+  // marca a vaga como ocupada e grava o agendamento — tudo numa transação,
+  // pra dois alunos nunca conseguirem reservar o mesmo horário ao mesmo tempo.
+  const handleAgendar = async (e) => {
+    e.preventDefault();
+    setErroAgendamento('');
+
+    if (!poloSelecionado || !instrumentoSelecionado || !vagaSelecionada) {
+      setErroAgendamento('Escolha o polo, o instrumento e o horário antes de continuar.');
+      return;
+    }
+    if (!dadosAluno.nome || !dadosAluno.email || !dadosAluno.senha) {
+      setErroAgendamento('Preencha nome, e-mail e senha para concluir o cadastro.');
+      return;
+    }
+    if (dadosAluno.senha.length < 6) {
+      setErroAgendamento('A senha precisa ter pelo menos 6 caracteres.');
+      return;
+    }
+    if (vagasOcupadas.includes(vagaSelecionada)) {
+      setErroAgendamento('Esse horário acabou de ser reservado por outra pessoa. Escolha outro.');
       return;
     }
 
+    const vaga = vagasDisponiveis.find(v => v.id === vagaSelecionada);
+    if (!vaga) {
+      setErroAgendamento('Não encontrei esse horário. Escolha novamente.');
+      return;
+    }
+
+    setSalvandoAgendamento(true);
     try {
-      await addDoc(collection(db, 'agendamentos'), {
-        ...novoAgendamento,
-        criadoEm: new Date().toISOString()
+      // Garante que existe uma conta de aluno autenticada antes de gravar o agendamento.
+      let credencial;
+      try {
+        credencial = await createUserWithEmailAndPassword(auth, dadosAluno.email, dadosAluno.senha);
+      } catch (errCriar) {
+        if (errCriar.code === 'auth/email-already-in-use') {
+          try {
+            credencial = await signInWithEmailAndPassword(auth, dadosAluno.email, dadosAluno.senha);
+          } catch (errLogin) {
+            setErroAgendamento('Esse e-mail já tem cadastro, mas a senha não confere. Confira a senha ou entre pelo "Portal do Aluno".');
+            setSalvandoAgendamento(false);
+            return;
+          }
+        } else if (errCriar.code === 'auth/invalid-email') {
+          setErroAgendamento('Esse e-mail não parece válido.');
+          setSalvandoAgendamento(false);
+          return;
+        } else {
+          throw errCriar;
+        }
+      }
+
+      const uid = credencial.user.uid;
+
+      await runTransaction(db, async (transaction) => {
+        const vagaRef = doc(db, 'vagas', vagaSelecionada);
+        const vagaSnap = await transaction.get(vagaRef);
+        if (vagaSnap.exists()) {
+          throw new Error('VAGA_OCUPADA');
+        }
+        transaction.set(vagaRef, { ocupado: true });
+
+        const agendamentoRef = doc(collection(db, 'agendamentos'));
+        transaction.set(agendamentoRef, {
+          nome: dadosAluno.nome,
+          telefone: dadosAluno.telefone || '',
+          local: poloSelecionado,
+          instrumento: instrumentoSelecionado,
+          dia: vaga.dia,
+          horario: vaga.horario,
+          horarioLabel: vaga.horarioLabel,
+          slotId: vagaSelecionada,
+          uid,
+          presenca: false,
+          tipoPagamento: 'pacote',
+          pago: false,
+          criadoEm: new Date().toISOString()
+        });
       });
-      setMensagemSucesso('Registro salvo com sucesso!');
-      setNovoAgendamento({
-        nome: '',
-        telefone: '',
-        local: 'saoluiz',
-        instrumento: 'violao',
-        data: '',
-        horario: '',
-        presenca: false,
-        tipoPagamento: 'pacote',
-        pago: false
-      });
-      setTimeout(() => setMensagemSucesso(''), 4000);
+
+      setMensagemSucesso('Aula agendada com sucesso! Você já está logado — confira no seu Portal do Aluno.');
+      setPoloSelecionado('');
+      setInstrumentoSelecionado('');
+      setVagaSelecionada('');
+      setDadosAluno({ nome: '', telefone: '', email: '', senha: '' });
+      setTimeout(() => setMensagemSucesso(''), 5000);
+      setAbaAtiva('portal');
     } catch (err) {
-      console.error("Erro ao salvar:", err);
-      alert('Erro ao salvar no banco de dados.');
+      console.error("Erro ao agendar:", err);
+      if (err.message === 'VAGA_OCUPADA') {
+        setErroAgendamento('Esse horário acabou de ser reservado por outra pessoa. Escolha outro.');
+      } else {
+        setErroAgendamento('Erro ao agendar. Tente novamente em instantes.');
+      }
+    } finally {
+      setSalvandoAgendamento(false);
     }
   };
 
@@ -233,6 +387,41 @@ export default function App() {
     return matchLocal && matchInst;
   });
 
+  // Instrumentos que realmente têm vaga cadastrada no polo escolhido
+  const instrumentosDoPolo = INSTRUMENTOS.filter(inst =>
+    DEFINICOES_VAGAS.some(def => def.local === poloSelecionado && def.instrumento === inst.id)
+  );
+
+  // Todas as vagas (horário a horário) do polo + instrumento escolhidos, já marcando as ocupadas
+  const vagasDisponiveis = useMemo(() => {
+    const lista = [];
+    DEFINICOES_VAGAS.filter(def => def.local === poloSelecionado && def.instrumento === instrumentoSelecionado)
+      .forEach(def => {
+        def.horarios.forEach(h => {
+          const id = `vaga-${def.local}-${def.instrumento}-${def.dia}-${h.value}`;
+          lista.push({
+            id,
+            dia: def.dia,
+            horario: h.value,
+            horarioLabel: h.label,
+            ocupada: vagasOcupadas.includes(id)
+          });
+        });
+      });
+    return lista;
+  }, [poloSelecionado, instrumentoSelecionado, vagasOcupadas]);
+
+  // Agrupa as vagas por dia, pra exibir em blocos na tela de agendamento
+  const vagasPorDia = vagasDisponiveis.reduce((acc, vaga) => {
+    if (!acc[vaga.dia]) acc[vaga.dia] = [];
+    acc[vaga.dia].push(vaga);
+    return acc;
+  }, {});
+
+  // Agendamentos do próprio aluno logado (as regras do Firestore já garantem
+  // que "agendamentos" só traz os dele quando não é admin, mas filtramos de novo por clareza)
+  const meusAgendamentos = usuario ? agendamentos.filter(item => item.uid === usuario.uid) : [];
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
       <header className="bg-emerald-800 text-white shadow-md print:hidden">
@@ -252,27 +441,27 @@ export default function App() {
               Visão Geral
             </button>
 
-            {usuario && !usuario.isAnonymous && (
+            {souAdmin && (
               <>
-                <button 
+                <button
                   onClick={() => setAbaAtiva('gerenciar')}
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'gerenciar' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
                 >
                   <Settings className="w-4 h-4" /> Gestão
                 </button>
-                <button 
+                <button
                   onClick={() => setAbaAtiva('pauta')}
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'pauta' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
                 >
                   <CheckSquare className="w-4 h-4" /> Chamada
                 </button>
-                <button 
+                <button
                   onClick={() => setAbaAtiva('pagamentos')}
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'pagamentos' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
                 >
                   <DollarSign className="w-4 h-4" /> Pagamentos
                 </button>
-                <button 
+                <button
                   onClick={() => setAbaAtiva('certificados')}
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'certificados' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
                 >
@@ -281,26 +470,45 @@ export default function App() {
               </>
             )}
 
-            <button 
+            <button
               onClick={() => setAbaAtiva('novo')}
               className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'novo' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
             >
               <PlusCircle className="w-4 h-4" /> Novo Cadastro
             </button>
-            
+
+            {souAluno && (
+              <button
+                onClick={() => setAbaAtiva('portal')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'portal' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+              >
+                <User className="w-4 h-4" /> Meu Portal
+              </button>
+            )}
+
+            {!souAluno && !souAdmin && (
+              <button
+                onClick={() => setAbaAtiva('loginAluno')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'loginAluno' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+              >
+                <LogIn className="w-4 h-4" /> Portal do Aluno
+              </button>
+            )}
+
             {usuario && !usuario.isAnonymous ? (
-              <button 
+              <button
                 onClick={fazerLogout}
                 className="flex items-center gap-1 bg-red-700 hover:bg-red-800 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition ml-2"
               >
                 <LogOut className="w-4 h-4" /> Sair
               </button>
             ) : (
-              <button 
+              <button
                 onClick={() => setAbaAtiva('login')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ml-2 ${abaAtiva === 'login' ? 'bg-emerald-900 text-white' : 'bg-emerald-700 hover:bg-emerald-600'}`}
+                className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition ml-2 opacity-70 hover:opacity-100 ${abaAtiva === 'login' ? 'bg-emerald-900 text-white' : 'bg-emerald-700 hover:bg-emerald-600'}`}
+                title="Acesso restrito à coordenação"
               >
-                <LogIn className="w-4 h-4" /> Admin
+                <LogIn className="w-3.5 h-3.5" /> Admin
               </button>
             )}
           </nav>
@@ -309,7 +517,7 @@ export default function App() {
 
       <main className="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6 print:p-0 print:max-w-none">
         {abaAtiva === 'painel' && (
-          usuario && !usuario.isAnonymous ? (
+          souAdmin ? (
             <div className="space-y-6">
               <div className="bg-white border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-sm text-center">
                 <p className="italic text-slate-700 font-medium">
@@ -398,7 +606,9 @@ export default function App() {
                     <p className="text-xs text-slate-500 mt-2 flex-1">{local.descricao}</p>
                     <button
                       onClick={() => {
-                        setNovoAgendamento((prev) => ({ ...prev, local: local.id }));
+                        setPoloSelecionado(local.id);
+                        setInstrumentoSelecionado('');
+                        setVagaSelecionada('');
                         setAbaAtiva('novo');
                       }}
                       className="mt-4 text-xs font-semibold text-emerald-700 hover:text-emerald-800 underline"
@@ -708,125 +918,180 @@ export default function App() {
         )}
 
         {abaAtiva === 'novo' && (
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 max-w-lg mx-auto">
-            <h2 className="text-lg font-bold text-slate-800 mb-4">Cadastrar Novo Aluno</h2>
-            
+          <div className="bg-white p-6 sm:p-8 rounded-xl shadow-sm border border-slate-200 max-w-3xl mx-auto">
+            <h2 className="text-xl font-bold text-slate-800 mb-6 pb-4 border-b border-slate-100 flex items-center gap-2">
+              <Calendar className="w-6 h-6 text-emerald-600" /> Cadastro e Agendamento
+            </h2>
+
             {mensagemSucesso && (
-              <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-800 p-3 rounded-lg text-sm flex items-center gap-2">
+              <div className="mb-6 bg-emerald-50 border border-emerald-200 text-emerald-800 p-3 rounded-lg text-sm flex items-center gap-2">
                 <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
                 <span>{mensagemSucesso}</span>
               </div>
             )}
 
-            <form onSubmit={salvarAgendamento} className="space-y-4">
+            {erroAgendamento && (
+              <div className="mb-6 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-sm flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                <span>{erroAgendamento}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAgendar} className="space-y-8">
+
+              {/* Passo 1: Polo */}
               <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nome do Aluno</label>
-                <input 
-                  type="text" 
-                  required
-                  value={novoAgendamento.nome}
-                  onChange={(e) => setNovoAgendamento({...novoAgendamento, nome: e.target.value})}
-                  placeholder="Ex: João da Silva" 
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
-                />
+                <label className="block text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                  <span className="bg-emerald-600 text-white w-5 h-5 rounded-full inline-flex items-center justify-center text-xs">1</span>
+                  Selecione o Polo de Ensino
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {LOCALIZACOES.map((local) => (
+                    <div
+                      key={local.id}
+                      onClick={() => { setPoloSelecionado(local.id); setInstrumentoSelecionado(''); setVagaSelecionada(''); }}
+                      className={`cursor-pointer rounded-lg border-2 p-4 flex flex-col items-center text-center transition-all ${poloSelecionado === local.id ? 'border-emerald-600 bg-emerald-50 text-emerald-800 shadow-sm' : 'border-slate-200 hover:border-emerald-300 text-slate-600'}`}
+                    >
+                      <MapPin className={`w-6 h-6 mb-1 ${poloSelecionado === local.id ? 'text-emerald-600' : 'text-slate-400'}`} />
+                      <span className="font-bold text-sm">{local.nome}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Telefone / WhatsApp</label>
-                <input 
-                  type="text" 
-                  value={novoAgendamento.telefone}
-                  onChange={(e) => setNovoAgendamento({...novoAgendamento, telefone: e.target.value})}
-                  placeholder="(35) 99999-9999" 
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Passo 2: Instrumento */}
+              {poloSelecionado && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Polo / Local</label>
-                  <select 
-                    value={novoAgendamento.local}
-                    onChange={(e) => setNovoAgendamento({...novoAgendamento, local: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
-                  >
-                    {LOCALIZACOES.map(l => (
-                      <option key={l.id} value={l.id}>{l.nome}</option>
+                  <label className="block text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    <span className="bg-emerald-600 text-white w-5 h-5 rounded-full inline-flex items-center justify-center text-xs">2</span>
+                    Turma / Instrumento
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {instrumentosDoPolo.map((inst) => (
+                      <div
+                        key={inst.id}
+                        onClick={() => { setInstrumentoSelecionado(inst.id); setVagaSelecionada(''); }}
+                        className={`cursor-pointer rounded-lg border-2 p-4 flex flex-col items-center transition-all ${instrumentoSelecionado === inst.id ? 'border-emerald-600 bg-emerald-50 text-emerald-800 shadow-sm' : 'border-slate-200 hover:border-emerald-300 text-slate-600'}`}
+                      >
+                        <inst.Icone className="w-6 h-6" />
+                        <span className="mt-1 font-bold text-sm">{inst.nome}</span>
+                      </div>
                     ))}
-                  </select>
+                  </div>
                 </div>
+              )}
 
+              {/* Passo 3: Dia e horário */}
+              {poloSelecionado && instrumentoSelecionado && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Instrumento</label>
-                  <select 
-                    value={novoAgendamento.instrumento}
-                    onChange={(e) => setNovoAgendamento({...novoAgendamento, instrumento: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
-                  >
-                    <option value="violao">Violão</option>
-                    <option value="bateria">Bateria</option>
-                  </select>
+                  <label className="block text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    <span className="bg-emerald-600 text-white w-5 h-5 rounded-full inline-flex items-center justify-center text-xs">3</span>
+                    Escolha o Dia e Horário Disponível
+                  </label>
+                  <div className="space-y-4">
+                    {Object.keys(vagasPorDia).map((dia) => (
+                      <div key={dia} className="border border-slate-200 rounded-lg overflow-hidden">
+                        <div className="bg-slate-50 px-4 py-2 text-sm font-bold text-slate-700 border-b border-slate-200 flex justify-between items-center">
+                          {dia}
+                          {dia.includes('Quinzenal') && (
+                            <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full uppercase tracking-wide">A cada 15 dias</span>
+                          )}
+                        </div>
+                        <div className="p-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                          {vagasPorDia[dia].map((vaga) => (
+                            <button
+                              key={vaga.id}
+                              type="button"
+                              disabled={vaga.ocupada}
+                              onClick={() => setVagaSelecionada(vaga.id)}
+                              className={`py-2 px-2 rounded-md text-xs font-medium flex flex-col items-center border transition-all
+                                ${vaga.ocupada ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed' :
+                                  vagaSelecionada === vaga.id ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' :
+                                  'bg-white text-slate-700 border-slate-300 hover:border-emerald-500 hover:text-emerald-700'}`}
+                            >
+                              <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {vaga.horarioLabel}</span>
+                              {vaga.ocupada && <span className="mt-0.5 text-[10px] font-bold text-red-400">Reservado</span>}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Tipo de Pagamento</label>
-                  <select 
-                    value={novoAgendamento.tipoPagamento}
-                    onChange={(e) => setNovoAgendamento({...novoAgendamento, tipoPagamento: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
-                  >
-                    <option value="pacote">Pacote Mensal</option>
-                    <option value="individual">Aula Individual</option>
-                  </select>
+              {/* Passo 4: Dados do aluno */}
+              {vagaSelecionada && (
+                <div className="bg-slate-50 p-5 rounded-lg border border-slate-200">
+                  <label className="block text-sm font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <span className="bg-emerald-600 text-white w-5 h-5 rounded-full inline-flex items-center justify-center text-xs">4</span>
+                    Dados do Aluno
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nome Completo</label>
+                      <input
+                        type="text"
+                        required
+                        value={dadosAluno.nome}
+                        onChange={(e) => setDadosAluno({ ...dadosAluno, nome: e.target.value })}
+                        placeholder="Ex: João da Silva"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Telefone / WhatsApp</label>
+                      <input
+                        type="text"
+                        value={dadosAluno.telefone}
+                        onChange={(e) => setDadosAluno({ ...dadosAluno, telefone: e.target.value })}
+                        placeholder="(35) 99999-9999"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">E-mail</label>
+                      <input
+                        type="email"
+                        required
+                        value={dadosAluno.email}
+                        onChange={(e) => setDadosAluno({ ...dadosAluno, email: e.target.value })}
+                        placeholder="joao@email.com"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Senha de Acesso (Portal do Aluno)</label>
+                      <input
+                        type="password"
+                        required
+                        minLength={6}
+                        value={dadosAluno.senha}
+                        onChange={(e) => setDadosAluno({ ...dadosAluno, senha: e.target.value })}
+                        placeholder="Mínimo 6 caracteres"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-3">
+                    Já tem cadastro? Usa o mesmo e-mail e senha aqui pra agendar outra aula na mesma conta.
+                  </p>
                 </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Status Pagamento</label>
-                  <select 
-                    value={novoAgendamento.pago ? 'sim' : 'nao'}
-                    onChange={(e) => setNovoAgendamento({...novoAgendamento, pago: e.target.value === 'sim'})}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
-                  >
-                    <option value="nao">Pendente</option>
-                    <option value="sim">Pago</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Data da Aula</label>
-                  <input 
-                    type="date" 
-                    value={novoAgendamento.data}
-                    onChange={(e) => setNovoAgendamento({...novoAgendamento, data: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Horário</label>
-                  <input 
-                    type="time" 
-                    value={novoAgendamento.horario}
-                    onChange={(e) => setNovoAgendamento({...novoAgendamento, horario: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-              </div>
+              )}
 
               <div className="pt-2 flex gap-3">
-                <button 
-                  type="submit"
-                  className="flex-1 bg-emerald-600 text-white font-medium py-2.5 rounded-lg text-sm hover:bg-emerald-700 transition shadow-sm"
-                >
-                  Salvar Cadastro
-                </button>
-                <button 
+                {vagaSelecionada && (
+                  <button
+                    type="submit"
+                    disabled={salvandoAgendamento}
+                    className="flex-1 bg-emerald-600 text-white font-bold py-2.5 rounded-lg text-sm hover:bg-emerald-700 transition shadow-sm disabled:opacity-60"
+                  >
+                    {salvandoAgendamento ? 'Agendando...' : 'Confirmar Vaga e Agendar'}
+                  </button>
+                )}
+                <button
                   type="button"
-                  onClick={() => setAbaAtiva(usuario && !usuario.isAnonymous ? 'gerenciar' : 'painel')}
+                  onClick={() => setAbaAtiva(souAdmin ? 'gerenciar' : 'painel')}
                   className="px-4 py-2.5 border border-slate-300 text-slate-600 font-medium rounded-lg text-sm hover:bg-slate-50 transition"
                 >
                   Voltar
@@ -834,6 +1099,145 @@ export default function App() {
               </div>
             </form>
           </div>
+        )}
+
+        {abaAtiva === 'loginAluno' && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 max-w-sm mx-auto">
+            <h2 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
+              <LogIn className="w-5 h-5 text-emerald-600" /> Portal do Aluno
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">Entre com o e-mail e senha que você criou no cadastro.</p>
+
+            {erroLoginAluno && (
+              <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{erroLoginAluno}</span>
+              </div>
+            )}
+
+            <form onSubmit={fazerLoginAluno} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">E-mail</label>
+                <input
+                  type="email"
+                  required
+                  value={emailAluno}
+                  onChange={(e) => setEmailAluno(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Senha</label>
+                <input
+                  type="password"
+                  required
+                  value={senhaAluno}
+                  onChange={(e) => setSenhaAluno(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div className="pt-2 flex flex-col gap-2">
+                <button
+                  type="submit"
+                  className="w-full bg-emerald-600 text-white font-medium py-2 rounded-lg text-sm hover:bg-emerald-700 transition shadow-sm"
+                >
+                  Acessar Meu Portal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAbaAtiva('novo')}
+                  className="w-full px-3 py-2 border border-slate-300 text-slate-600 font-medium rounded-lg text-sm hover:bg-slate-50 transition text-center"
+                >
+                  Ainda não tenho cadastro
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {abaAtiva === 'portal' && (
+          souAluno ? (
+            <div className="max-w-5xl mx-auto space-y-6">
+              <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-emerald-500 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800">
+                    Olá, {meusAgendamentos[0]?.nome || 'aluno(a)'}!
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-1">{usuario.email}</p>
+                </div>
+                <button
+                  onClick={fazerLogout}
+                  className="px-4 py-2 text-sm font-bold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition w-full sm:w-auto"
+                >
+                  Sair da Conta
+                </button>
+              </div>
+
+              {meusAgendamentos.length === 0 ? (
+                <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300 p-6">
+                  <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-2" />
+                  <p className="text-slate-500 font-medium">Você ainda não tem nenhuma aula agendada.</p>
+                  <button
+                    onClick={() => setAbaAtiva('novo')}
+                    className="mt-4 inline-flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition"
+                  >
+                    Agendar Aula
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="lg:col-span-1 space-y-4">
+                    {meusAgendamentos.map((item) => (
+                      <div key={item.id} className="bg-emerald-800 text-white rounded-xl shadow-sm p-5">
+                        <div className="flex items-center text-emerald-200 mb-1 gap-2 text-xs font-semibold uppercase tracking-wide">
+                          <MapPin className="w-4 h-4" /> {LOCALIZACOES.find(l => l.id === item.local)?.nome}
+                        </div>
+                        <h3 className="text-lg font-bold leading-tight capitalize">{item.instrumento} — {item.dia || 'Horário a combinar'}</h3>
+                        <div className="mt-3 bg-emerald-900/40 rounded-lg p-3 flex items-center gap-2">
+                          <Clock className="w-5 h-5 text-emerald-300" />
+                          <span className="font-bold">{item.horarioLabel || item.horario || 'A combinar'}</span>
+                        </div>
+                        <p className="text-xs text-emerald-200 mt-3">
+                          {item.pago ? 'Pagamento em dia.' : 'Pagamento pendente — fale com a coordenação.'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="lg:col-span-2 bg-white rounded-xl shadow-sm p-6 border border-slate-200">
+                    <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 border-b border-slate-100 pb-3">
+                      <BookOpen className="w-5 h-5 text-emerald-600" /> Material Didático (Prática em Casa)
+                    </h3>
+                    <div className="space-y-3">
+                      {(MATERIAIS[meusAgendamentos[0]?.instrumento] || []).map((mat, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-emerald-300 transition">
+                          <div>
+                            <p className="text-sm font-bold text-slate-800">{mat.titulo}</p>
+                            <p className="text-xs text-slate-500 uppercase tracking-wide">{mat.tipo}</p>
+                          </div>
+                          <span className="text-xs font-semibold text-slate-400 border border-slate-200 px-3 py-1.5 rounded-lg">Em breve</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-4">
+                      Materiais ainda não vinculados a arquivos reais — placeholder até a coordenação subir o conteúdo.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300 p-6 max-w-md mx-auto">
+              <User className="w-12 h-12 text-slate-300 mx-auto mb-2" />
+              <p className="text-slate-500 font-medium">Faça login pra ver seu portal.</p>
+              <button
+                onClick={() => setAbaAtiva('loginAluno')}
+                className="mt-4 inline-flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition"
+              >
+                Entrar
+              </button>
+            </div>
+          )
         )}
 
         {abaAtiva === 'login' && (
