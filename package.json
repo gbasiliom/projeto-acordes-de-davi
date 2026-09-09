@@ -6,7 +6,7 @@
   },
   "dependencies": {
     "firebase": "^10.5.0",
-    "lucide-react": "^0.292.0",
+    "lucide-react": "latest",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
