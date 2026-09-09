@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc, runTransaction } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
 
 // E-mail que tem acesso de administrador. Todo outro login vira "aluno".
 const ADMIN_EMAIL = 'auladeinstrumentosmusicais2026@gmail.com';
@@ -381,6 +381,149 @@ export default function App() {
     reader.readAsText(file);
   };
 
+  // Parser de CSV que respeita campos entre aspas (necessário porque o cabeçalho
+  // do formulário tem vírgula dentro de um campo, ex: "Possuí violão, bateria...?")
+  const parseLinhaCSV = (linha) => {
+    const resultado = [];
+    let atual = '';
+    let dentroAspas = false;
+    for (let i = 0; i < linha.length; i++) {
+      const c = linha[i];
+      if (c === '"') {
+        if (dentroAspas && linha[i + 1] === '"') {
+          atual += '"';
+          i++;
+        } else {
+          dentroAspas = !dentroAspas;
+        }
+      } else if (c === ',' && !dentroAspas) {
+        resultado.push(atual);
+        atual = '';
+      } else {
+        atual += c;
+      }
+    }
+    resultado.push(atual);
+    return resultado;
+  };
+
+  // Migração pontual: lê a planilha de respostas do formulário do São Luiz e
+  // recria os alunos com horário FIXO na grade nova — Violão na sexta, Bateria
+  // no sábado, em ordem de inscrição, ignorando o horário que cada um escolheu
+  // no formulário original. Substitui os registros antigos do polo São Luiz
+  // (que estavam com telefone/e-mail trocados por causa da importação anterior).
+  const handleMigrarSaoLuiz = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const linhas = event.target.result.split(/\r?\n/).filter(l => l.trim());
+        if (linhas.length < 2) {
+          setMensagemImportacao('Planilha vazia ou em formato inesperado.');
+          return;
+        }
+
+        const cabecalho = parseLinhaCSV(linhas[0]).map(c => c.toLowerCase().trim());
+        const idx = {
+          nome: cabecalho.findIndex(c => c.includes('nome')),
+          telefone: cabecalho.findIndex(c => c.includes('telefone')),
+          instrumento: cabecalho.findIndex(c => c.includes('instrumento') && c.includes('quer')),
+          possui: cabecalho.findIndex(c => c.includes('possu'))
+        };
+
+        if (idx.nome === -1 || idx.instrumento === -1) {
+          setMensagemImportacao('Não consegui identificar as colunas de nome/instrumento nessa planilha.');
+          return;
+        }
+
+        const alunosViolao = [];
+        const alunosBateria = [];
+
+        for (let i = 1; i < linhas.length; i++) {
+          const cols = parseLinhaCSV(linhas[i]);
+          const nome = (cols[idx.nome] || '').trim();
+          if (!nome) continue;
+
+          const telefone = idx.telefone > -1 ? (cols[idx.telefone] || '').trim() : '';
+          const instrumentoRaw = (cols[idx.instrumento] || '').toLowerCase();
+          const temInstrumentoProprio = idx.possui > -1 ? /sim/i.test(cols[idx.possui] || '') : undefined;
+          const registro = { nome, telefone, temInstrumentoProprio };
+
+          if (instrumentoRaw.includes('bat')) {
+            alunosBateria.push(registro);
+          } else {
+            alunosViolao.push(registro);
+          }
+        }
+
+        const defViolao = DEFINICOES_VAGAS.find(d => d.local === 'saoluiz' && d.instrumento === 'violao');
+        const defBateria = DEFINICOES_VAGAS.find(d => d.local === 'saoluiz' && d.instrumento === 'bateria');
+
+        const montarAgendamentos = (lista, def, instrumento) => {
+          const prontos = [];
+          const semVaga = [];
+          lista.forEach((aluno, i) => {
+            const horario = def.horarios[i];
+            if (!horario) {
+              semVaga.push(aluno.nome);
+              return;
+            }
+            const slotId = `vaga-saoluiz-${instrumento}-${def.dia}-${horario.value}`;
+            const dadosAgendamento = {
+              nome: aluno.nome,
+              telefone: aluno.telefone,
+              local: 'saoluiz',
+              instrumento,
+              dia: def.dia,
+              horario: horario.value,
+              horarioLabel: horario.label,
+              slotId,
+              presenca: false,
+              tipoPagamento: 'pacote',
+              pago: false,
+              criadoEm: new Date().toISOString()
+            };
+            if (aluno.temInstrumentoProprio !== undefined) {
+              dadosAgendamento.temInstrumentoProprio = aluno.temInstrumentoProprio;
+            }
+            prontos.push(dadosAgendamento);
+          });
+          return { prontos, semVaga };
+        };
+
+        const { prontos: prontosViolao, semVaga: semVagaViolao } = montarAgendamentos(alunosViolao, defViolao, 'violao');
+        const { prontos: prontosBateria, semVaga: semVagaBateria } = montarAgendamentos(alunosBateria, defBateria, 'bateria');
+
+        const antigosSaoLuiz = agendamentos.filter(a => a.local === 'saoluiz');
+        const confirmar = window.confirm(
+          `Isso vai apagar os ${antigosSaoLuiz.length} cadastros atuais do polo São Luiz e recriar ${prontosViolao.length + prontosBateria.length} alunos com horário fixo (${prontosViolao.length} violão na sexta, ${prontosBateria.length} bateria no sábado). Continuar?`
+        );
+        if (!confirmar) return;
+
+        for (const antigo of antigosSaoLuiz) {
+          await deleteDoc(doc(db, 'agendamentos', antigo.id));
+        }
+
+        for (const registro of [...prontosViolao, ...prontosBateria]) {
+          await addDoc(collection(db, 'agendamentos'), registro);
+          await setDoc(doc(db, 'vagas', registro.slotId), { ocupado: true });
+        }
+
+        let resumo = `Migração concluída: ${prontosViolao.length} de violão (sexta) e ${prontosBateria.length} de bateria (sábado) cadastrados com horário fixo.`;
+        if (semVagaViolao.length) resumo += ` Sem vaga de violão (excedeu as 8 vagas da manhã): ${semVagaViolao.join(', ')}.`;
+        if (semVagaBateria.length) resumo += ` Sem vaga de bateria (excedeu as 8 vagas da manhã): ${semVagaBateria.join(', ')}.`;
+        setMensagemImportacao(resumo);
+        setTimeout(() => setMensagemImportacao(''), 15000);
+      } catch (err) {
+        console.error('Erro na migração da planilha:', err);
+        setMensagemImportacao('Erro ao processar a planilha. Veja o console do navegador para detalhes.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const agendamentosFiltrados = agendamentos.filter(item => {
     const matchLocal = filtroLocal === 'todos' || item.local === filtroLocal;
     const matchInst = filtroInstrumento === 'todos' || item.instrumento === filtroInstrumento;
@@ -650,6 +793,20 @@ export default function App() {
               <label className="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer transition shadow-sm inline-flex items-center gap-2 shrink-0">
                 <Upload className="w-4 h-4" /> Selecionar CSV
                 <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
+              </label>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <Calendar className="w-8 h-8 text-amber-700 shrink-0" />
+                <div>
+                  <h3 className="text-sm font-bold text-amber-900">Migrar planilha do formulário — São Luiz (horário fixo)</h3>
+                  <p className="text-xs text-amber-700">Substitui os cadastros atuais do polo São Luiz por horário fixo na grade nova: Violão na sexta, Bateria no sábado, em ordem de inscrição.</p>
+                </div>
+              </div>
+              <label className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer transition shadow-sm inline-flex items-center gap-2 shrink-0">
+                <Upload className="w-4 h-4" /> Selecionar Planilha
+                <input type="file" accept=".csv" onChange={handleMigrarSaoLuiz} className="hidden" />
               </label>
             </div>
 
