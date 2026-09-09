@@ -628,6 +628,31 @@ export default function App() {
     }
   };
 
+  // Remove só UM horário específico de dentro de uma turma que tem vários horários
+  // gerados (ex: excluir só o bloco das 08:40 de uma turma que vai das 08:00 às 13:20).
+  // Se era o último horário da turma, apaga a turma inteira em vez de deixar ela vazia.
+  const removerHorarioDaTurma = async (turma, valorHorario) => {
+    const alvo = (turma.horarios || []).find(h => h.value === valorHorario);
+    const idVaga = `vaga-${turma.local}-${turma.instrumento}-${turma.dia}-${valorHorario}`;
+    const ocupado = vagasOcupadas.includes(idVaga);
+    const aviso = ocupado
+      ? `O horário ${alvo?.label || valorHorario} já tem um aluno agendado. O agendamento dele continua valendo, mas esse horário deixa de aparecer pra novos cadastros. Remover mesmo assim?`
+      : `Remover o horário ${alvo?.label || valorHorario} de "${turma.dia}"?`;
+    if (!window.confirm(aviso)) return;
+
+    const novosHorarios = (turma.horarios || []).filter(h => h.value !== valorHorario);
+    try {
+      if (novosHorarios.length === 0) {
+        await deleteDoc(doc(db, 'turmas', turma.id));
+      } else {
+        await updateDoc(doc(db, 'turmas', turma.id), { horarios: novosHorarios });
+      }
+    } catch (err) {
+      console.error('Erro ao remover horário da turma:', err);
+      alert('Erro ao remover o horário.');
+    }
+  };
+
   // Popula a coleção "turmas" com a grade original (só útil na primeira vez, ou
   // pra recriar algo que foi apagado por engano) — nunca duplica o que já existe.
   const restaurarGradePadrao = async () => {
@@ -693,17 +718,17 @@ export default function App() {
     return acc;
   }, {});
 
-  // Verifica se existe pelo menos uma vaga livre em QUALQUER polo/instrumento/turma —
-  // usado na página inicial pra avisar quando a agenda inteira está lotada.
-  const existeVagaLivreEmAlgumLugar = useMemo(() => {
-    return turmasCadastradas.some(t =>
-      (t.horarios || []).some(h => {
+  // Verifica, pra um polo específico, se todas as vagas de todas as turmas dele estão ocupadas.
+  const poloEstaLotado = (localId) => {
+    const turmasDoLocal = turmasCadastradas.filter(t => t.local === localId);
+    if (turmasDoLocal.length === 0) return false;
+    return turmasDoLocal.every(t =>
+      (t.horarios || []).every(h => {
         const id = `vaga-${t.local}-${t.instrumento}-${t.dia}-${h.value}`;
-        return !vagasOcupadas.includes(id);
+        return vagasOcupadas.includes(id);
       })
     );
-  }, [turmasCadastradas, vagasOcupadas]);
-  const todosHorariosLotados = turmasCadastradas.length > 0 && !existeVagaLivreEmAlgumLugar;
+  };
 
   // Agendamentos do próprio aluno logado (as regras do Firestore já garantem
   // que "agendamentos" só traz os dele quando não é admin, mas filtramos de novo por clareza)
@@ -883,40 +908,43 @@ export default function App() {
                 <p className="text-slate-600 text-sm sm:text-base">
                   A Música Transforma Vidas. Escolha o polo mais próximo de você, agende seu horário e venha fazer parte.
                 </p>
-                {todosHorariosLotados ? (
-                  <div className="inline-flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2.5 rounded-lg text-sm font-medium">
-                    <AlertTriangle className="w-4 h-4 shrink-0" />
-                    No momento não há horário disponível em nenhum polo. Volte em breve para conferir novas vagas.
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setAbaAtiva('novo')}
-                    className="inline-flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-emerald-700 transition shadow-sm"
-                  >
-                    Ver Polos e Agendar
-                  </button>
-                )}
+                <button
+                  onClick={() => setAbaAtiva('novo')}
+                  className="inline-flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-emerald-700 transition shadow-sm"
+                >
+                  Ver Polos e Agendar
+                </button>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-3">
-                {LOCALIZACOES.map((local) => (
-                  <div key={local.id} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 text-center hover:shadow-md transition flex flex-col items-center">
-                    <MapPin className="w-8 h-8 text-emerald-600 mb-2" />
-                    <h3 className="font-bold text-slate-800">{local.nome}</h3>
-                    <p className="text-xs text-slate-500 mt-2 flex-1">{local.descricao}</p>
-                    <button
-                      onClick={() => {
-                        setPoloSelecionado(local.id);
-                        setInstrumentoSelecionado('');
-                        setVagaSelecionada('');
-                        setAbaAtiva('novo');
-                      }}
-                      className="mt-4 text-xs font-semibold text-emerald-700 hover:text-emerald-800 underline"
-                    >
-                      Agendar aqui
-                    </button>
-                  </div>
-                ))}
+                {LOCALIZACOES.map((local) => {
+                  const lotado = poloEstaLotado(local.id);
+                  return (
+                    <div key={local.id} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 text-center hover:shadow-md transition flex flex-col items-center">
+                      <MapPin className="w-8 h-8 text-emerald-600 mb-2" />
+                      <h3 className="font-bold text-slate-800">{local.nome}</h3>
+                      <p className="text-xs text-slate-500 mt-2 flex-1">{local.descricao}</p>
+                      {lotado ? (
+                        <div className="mt-4 flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          Sem horário disponível
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setPoloSelecionado(local.id);
+                            setInstrumentoSelecionado('');
+                            setVagaSelecionada('');
+                            setAbaAtiva('novo');
+                          }}
+                          className="mt-4 text-xs font-semibold text-emerald-700 hover:text-emerald-800 underline"
+                        >
+                          Agendar aqui
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )
@@ -1341,20 +1369,43 @@ export default function App() {
                   </h3>
                   <div className="space-y-2">
                     {turmasDoLocal.map((t) => (
-                      <div key={t.id} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50">
-                        <div>
-                          <span className="text-xs font-semibold uppercase text-emerald-700">{t.instrumento === 'bateria' ? 'Bateria' : 'Violão'}</span>
-                          <p className="text-sm font-bold text-slate-800">{t.dia}</p>
-                          <p className="text-xs text-slate-500">
-                            {t.horarios?.[0]?.label?.split(' - ')[0]} até {t.horarios?.[t.horarios.length - 1]?.label?.split(' - ')[1]} · {t.horarios?.length || 0} vaga(s)
-                          </p>
+                      <div key={t.id} className="p-3 rounded-lg border border-slate-200 bg-slate-50">
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <div>
+                            <span className="text-xs font-semibold uppercase text-emerald-700">{t.instrumento === 'bateria' ? 'Bateria' : 'Violão'}</span>
+                            <p className="text-sm font-bold text-slate-800">{t.dia}</p>
+                            <p className="text-xs text-slate-500">
+                              {t.horarios?.[0]?.label?.split(' - ')[0]} até {t.horarios?.[t.horarios.length - 1]?.label?.split(' - ')[1]} · {t.horarios?.length || 0} vaga(s)
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => removerTurma(t.id)}
+                            className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1 shrink-0"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Remover turma inteira
+                          </button>
                         </div>
-                        <button
-                          onClick={() => removerTurma(t.id)}
-                          className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1 shrink-0"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" /> Remover
-                        </button>
+                        <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-200">
+                          {(t.horarios || []).map((h) => {
+                            const idVaga = `vaga-${t.local}-${t.instrumento}-${t.dia}-${h.value}`;
+                            const ocupado = vagasOcupadas.includes(idVaga);
+                            return (
+                              <button
+                                key={h.value}
+                                onClick={() => removerHorarioDaTurma(t, h.value)}
+                                title={ocupado ? 'Já tem aluno agendado neste horário' : 'Remover só este horário'}
+                                className={`group inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium border transition ${
+                                  ocupado
+                                    ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                                    : 'bg-white border-slate-200 text-slate-600 hover:bg-red-50 hover:border-red-200 hover:text-red-600'
+                                }`}
+                              >
+                                {h.label}
+                                <Trash2 className="w-3 h-3 opacity-50 group-hover:opacity-100" />
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     ))}
                   </div>
