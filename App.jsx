@@ -693,6 +693,18 @@ export default function App() {
     return acc;
   }, {});
 
+  // Verifica se existe pelo menos uma vaga livre em QUALQUER polo/instrumento/turma —
+  // usado na página inicial pra avisar quando a agenda inteira está lotada.
+  const existeVagaLivreEmAlgumLugar = useMemo(() => {
+    return turmasCadastradas.some(t =>
+      (t.horarios || []).some(h => {
+        const id = `vaga-${t.local}-${t.instrumento}-${t.dia}-${h.value}`;
+        return !vagasOcupadas.includes(id);
+      })
+    );
+  }, [turmasCadastradas, vagasOcupadas]);
+  const todosHorariosLotados = turmasCadastradas.length > 0 && !existeVagaLivreEmAlgumLugar;
+
   // Agendamentos do próprio aluno logado (as regras do Firestore já garantem
   // que "agendamentos" só traz os dele quando não é admin, mas filtramos de novo por clareza)
   const meusAgendamentos = usuario ? agendamentos.filter(item => item.uid === usuario.uid) : [];
@@ -871,12 +883,19 @@ export default function App() {
                 <p className="text-slate-600 text-sm sm:text-base">
                   A Música Transforma Vidas. Escolha o polo mais próximo de você, agende seu horário e venha fazer parte.
                 </p>
-                <button
-                  onClick={() => setAbaAtiva('novo')}
-                  className="inline-flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-emerald-700 transition shadow-sm"
-                >
-                  Ver Polos e Agendar
-                </button>
+                {todosHorariosLotados ? (
+                  <div className="inline-flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2.5 rounded-lg text-sm font-medium">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    No momento não há horário disponível em nenhum polo. Volte em breve para conferir novas vagas.
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setAbaAtiva('novo')}
+                    className="inline-flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-emerald-700 transition shadow-sm"
+                  >
+                    Ver Polos e Agendar
+                  </button>
+                )}
               </div>
 
               <div className="grid gap-4 sm:grid-cols-3">
