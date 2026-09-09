@@ -11,13 +11,13 @@ const LOCALIZACOES = [
 ];
 
 const firebaseConfig = {
-  apiKey: "AIzaSyC1zP4nWqJ6wEwgSMqIo_",
+  apiKey: "AIzaSyDmT6qtTaCYAmYpCiZWQMPavmGE9wSmqlo",
   authDomain: "acordes-de-davi.firebaseapp.com",
   projectId: "acordes-de-davi",
-  storageBucket: "acordes-de-davi.appspot.com",
-  messagingSenderId: "22623463664",
-  appId: "1:22623463664:web:7d7f45f82f4f5bf48fbfc",
-  measurementId: "G-K9C7Q7J7D"
+  storageBucket: "acordes-de-davi.firebasestorage.app",
+  messagingSenderId: "226243463669",
+  appId: "1:226243463669:web:6a9ac7d10dd5f25f48f8bc",
+  measurementId: "G-2XMXYQGRT7"
 };
 
 const app = initializeApp(firebaseConfig);
