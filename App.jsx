@@ -51,8 +51,10 @@ const HORARIOS_CHALE = [
   { label: '14:15 - 14:55', value: '14:15' }
 ];
 
-// Matriz de vagas: cada combinação polo + instrumento + dia tem sua própria grade de horários
-const DEFINICOES_VAGAS = [
+// Grade padrão inicial — usada só como "semente" pra popular a coleção "turmas" do
+// Firestore na primeira vez (botão "Restaurar grade padrão" na aba Horários). A partir
+// daí, quem manda na grade de horários é o admin, pela tela — não mais o código.
+const GRADE_PADRAO = [
   { local: 'saoluiz', instrumento: 'violao', dia: 'Sexta (Quinzenal)', horarios: HORARIOS_SAO_LUIZ },
   { local: 'saoluiz', instrumento: 'bateria', dia: 'Sábado (Quinzenal - Semana A)', horarios: HORARIOS_SAO_LUIZ },
   { local: 'matafria', instrumento: 'bateria', dia: 'Quarta-feira', horarios: HORARIOS_MATAFRIA_QUARTA },
@@ -93,6 +95,12 @@ const db = getFirestore(app);
 export default function App() {
   const [agendamentos, setAgendamentos] = useState([]);
   const [vagasOcupadas, setVagasOcupadas] = useState([]);
+  const [turmasCadastradas, setTurmasCadastradas] = useState([]);
+
+  // --- Gestão de horários (admin) ---
+  const [novaTurma, setNovaTurma] = useState({ local: 'saoluiz', instrumento: 'violao', dia: '', inicio: '', fim: '', duracao: 40 });
+  const [erroTurma, setErroTurma] = useState('');
+  const [salvandoTurma, setSalvandoTurma] = useState(false);
   const [loading, setLoading] = useState(true);
   const [abaAtiva, setAbaAtiva] = useState('painel');
   const [usuario, setUsuario] = useState(null);
@@ -162,10 +170,20 @@ export default function App() {
       console.error("Erro ao buscar vagas ocupadas:", error);
     });
 
+    // Grade de turmas (polo + instrumento + dia + horários) — pública pra leitura,
+    // só o admin pode criar/editar/remover. É o que decide quais horários aparecem
+    // pro aluno escolher no cadastro.
+    const unsubTurmas = onSnapshot(collection(db, 'turmas'), (snapshot) => {
+      setTurmasCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.error("Erro ao buscar turmas:", error);
+    });
+
     return () => {
       unsubAuth();
       unsubscribe();
       unsubVagas();
+      unsubTurmas();
     };
   }, []);
 
@@ -458,27 +476,36 @@ export default function App() {
           }
         }
 
-        const defViolao = DEFINICOES_VAGAS.find(d => d.local === 'saoluiz' && d.instrumento === 'violao');
-        const defBateria = DEFINICOES_VAGAS.find(d => d.local === 'saoluiz' && d.instrumento === 'bateria');
+        const horariosViolao = turmasCadastradas
+          .filter(t => t.local === 'saoluiz' && t.instrumento === 'violao')
+          .flatMap(t => (t.horarios || []).map(h => ({ dia: t.dia, horario: h })));
+        const horariosBateria = turmasCadastradas
+          .filter(t => t.local === 'saoluiz' && t.instrumento === 'bateria')
+          .flatMap(t => (t.horarios || []).map(h => ({ dia: t.dia, horario: h })));
 
-        const montarAgendamentos = (lista, def, instrumento) => {
+        if (horariosViolao.length === 0 || horariosBateria.length === 0) {
+          setMensagemImportacao('Antes de migrar, cria as turmas de São Luiz (Violão e Bateria) na aba Horários — ou clica em "Restaurar grade padrão" lá.');
+          return;
+        }
+
+        const montarAgendamentos = (lista, horariosDisponiveis, instrumento) => {
           const prontos = [];
           const semVaga = [];
           lista.forEach((aluno, i) => {
-            const horario = def.horarios[i];
-            if (!horario) {
+            const slot = horariosDisponiveis[i];
+            if (!slot) {
               semVaga.push(aluno.nome);
               return;
             }
-            const slotId = `vaga-saoluiz-${instrumento}-${def.dia}-${horario.value}`;
+            const slotId = `vaga-saoluiz-${instrumento}-${slot.dia}-${slot.horario.value}`;
             const dadosAgendamento = {
               nome: aluno.nome,
               telefone: aluno.telefone,
               local: 'saoluiz',
               instrumento,
-              dia: def.dia,
-              horario: horario.value,
-              horarioLabel: horario.label,
+              dia: slot.dia,
+              horario: slot.horario.value,
+              horarioLabel: slot.horario.label,
               slotId,
               presenca: false,
               tipoPagamento: 'pacote',
@@ -493,8 +520,8 @@ export default function App() {
           return { prontos, semVaga };
         };
 
-        const { prontos: prontosViolao, semVaga: semVagaViolao } = montarAgendamentos(alunosViolao, defViolao, 'violao');
-        const { prontos: prontosBateria, semVaga: semVagaBateria } = montarAgendamentos(alunosBateria, defBateria, 'bateria');
+        const { prontos: prontosViolao, semVaga: semVagaViolao } = montarAgendamentos(alunosViolao, horariosViolao, 'violao');
+        const { prontos: prontosBateria, semVaga: semVagaBateria } = montarAgendamentos(alunosBateria, horariosBateria, 'bateria');
 
         const antigosSaoLuiz = agendamentos.filter(a => a.local === 'saoluiz');
         const confirmar = window.confirm(
@@ -533,27 +560,123 @@ export default function App() {
     return 'A combinar';
   };
 
+  const formatarMinutos = (totalMin) => {
+    const h = Math.floor(totalMin / 60).toString().padStart(2, '0');
+    const m = (totalMin % 60).toString().padStart(2, '0');
+    return `${h}:${m}`;
+  };
+
+  // Gera os blocos de horário de um dia a partir de início/fim/duração — ex:
+  // 08:00 até 13:20 de 40 em 40 min vira ["08:00-08:40", "08:40-09:20", ...]
+  const gerarHorarios = (inicio, fim, duracaoMin) => {
+    const [hIni, mIni] = inicio.split(':').map(Number);
+    const [hFim, mFim] = fim.split(':').map(Number);
+    let atual = hIni * 60 + mIni;
+    const fimTotal = hFim * 60 + mFim;
+    const horarios = [];
+    while (atual + duracaoMin <= fimTotal) {
+      const valorInicio = formatarMinutos(atual);
+      const fimBloco = atual + duracaoMin;
+      horarios.push({ value: valorInicio, label: `${valorInicio} - ${formatarMinutos(fimBloco)}` });
+      atual = fimBloco;
+    }
+    return horarios;
+  };
+
+  // Cria uma nova turma (dia + faixa de horário) pra um polo/instrumento — só o admin
+  // consegue fazer isso (regra do Firestore); os alunos só escolhem entre o que já existe.
+  const adicionarTurma = async (e) => {
+    e.preventDefault();
+    setErroTurma('');
+
+    if (!novaTurma.dia.trim() || !novaTurma.inicio || !novaTurma.fim) {
+      setErroTurma('Preencha o nome do dia/grupo e os horários de início e fim.');
+      return;
+    }
+    const duracao = Number(novaTurma.duracao) || 40;
+    const horarios = gerarHorarios(novaTurma.inicio, novaTurma.fim, duracao);
+    if (horarios.length === 0) {
+      setErroTurma('Não deu pra gerar nenhum horário com esses valores — confira início, fim e duração.');
+      return;
+    }
+
+    setSalvandoTurma(true);
+    try {
+      await addDoc(collection(db, 'turmas'), {
+        local: novaTurma.local,
+        instrumento: novaTurma.instrumento,
+        dia: novaTurma.dia.trim(),
+        horarios,
+        criadoEm: new Date().toISOString()
+      });
+      setNovaTurma({ local: novaTurma.local, instrumento: novaTurma.instrumento, dia: '', inicio: '', fim: '', duracao: 40 });
+    } catch (err) {
+      console.error('Erro ao criar turma:', err);
+      setErroTurma('Erro ao salvar a turma. Tente novamente.');
+    } finally {
+      setSalvandoTurma(false);
+    }
+  };
+
+  const removerTurma = async (turmaId) => {
+    if (!window.confirm('Remover essa turma da grade? Os alunos já agendados nela continuam com o agendamento deles, só deixa de aparecer como opção pra novos cadastros.')) return;
+    try {
+      await deleteDoc(doc(db, 'turmas', turmaId));
+    } catch (err) {
+      console.error('Erro ao remover turma:', err);
+      alert('Erro ao remover a turma.');
+    }
+  };
+
+  // Popula a coleção "turmas" com a grade original (só útil na primeira vez, ou
+  // pra recriar algo que foi apagado por engano) — nunca duplica o que já existe.
+  const restaurarGradePadrao = async () => {
+    const faltando = GRADE_PADRAO.filter(def =>
+      !turmasCadastradas.some(t => t.local === def.local && t.instrumento === def.instrumento && t.dia === def.dia)
+    );
+    if (faltando.length === 0) {
+      alert('A grade padrão já está toda cadastrada.');
+      return;
+    }
+    if (!window.confirm(`Isso vai criar ${faltando.length} turma(s) da grade padrão que ainda não existem. Continuar?`)) return;
+    try {
+      for (const def of faltando) {
+        await addDoc(collection(db, 'turmas'), {
+          local: def.local,
+          instrumento: def.instrumento,
+          dia: def.dia,
+          horarios: def.horarios,
+          criadoEm: new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.error('Erro ao restaurar grade padrão:', err);
+      alert('Erro ao restaurar a grade padrão.');
+    }
+  };
+
   const agendamentosFiltrados = agendamentos.filter(item => {
     const matchLocal = filtroLocal === 'todos' || item.local === filtroLocal;
     const matchInst = filtroInstrumento === 'todos' || item.instrumento === filtroInstrumento;
     return matchLocal && matchInst;
   });
 
-  // Instrumentos que realmente têm vaga cadastrada no polo escolhido
+  // Instrumentos que realmente têm turma cadastrada no polo escolhido (grade vem do Firestore agora)
   const instrumentosDoPolo = INSTRUMENTOS.filter(inst =>
-    DEFINICOES_VAGAS.some(def => def.local === poloSelecionado && def.instrumento === inst.id)
+    turmasCadastradas.some(t => t.local === poloSelecionado && t.instrumento === inst.id)
   );
 
   // Todas as vagas (horário a horário) do polo + instrumento escolhidos, já marcando as ocupadas
   const vagasDisponiveis = useMemo(() => {
     const lista = [];
-    DEFINICOES_VAGAS.filter(def => def.local === poloSelecionado && def.instrumento === instrumentoSelecionado)
-      .forEach(def => {
-        def.horarios.forEach(h => {
-          const id = `vaga-${def.local}-${def.instrumento}-${def.dia}-${h.value}`;
+    turmasCadastradas
+      .filter(t => t.local === poloSelecionado && t.instrumento === instrumentoSelecionado)
+      .forEach(t => {
+        (t.horarios || []).forEach(h => {
+          const id = `vaga-${t.local}-${t.instrumento}-${t.dia}-${h.value}`;
           lista.push({
             id,
-            dia: def.dia,
+            dia: t.dia,
             horario: h.value,
             horarioLabel: h.label,
             ocupada: vagasOcupadas.includes(id)
@@ -561,7 +684,7 @@ export default function App() {
         });
       });
     return lista;
-  }, [poloSelecionado, instrumentoSelecionado, vagasOcupadas]);
+  }, [poloSelecionado, instrumentoSelecionado, vagasOcupadas, turmasCadastradas]);
 
   // Agrupa as vagas por dia, pra exibir em blocos na tela de agendamento
   const vagasPorDia = vagasDisponiveis.reduce((acc, vaga) => {
@@ -618,6 +741,12 @@ export default function App() {
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'certificados' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
                 >
                   <Award className="w-4 h-4" /> Certificados
+                </button>
+                <button
+                  onClick={() => setAbaAtiva('horarios')}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'horarios' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                >
+                  <Clock className="w-4 h-4" /> Horários
                 </button>
               </>
             )}
@@ -1078,6 +1207,147 @@ export default function App() {
                     <p className="text-slate-500">Data de Emissão: {new Date().toLocaleDateString('pt-BR')}</p>
                   </div>
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {abaAtiva === 'horarios' && (
+          <div className="space-y-6 max-w-4xl mx-auto">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 pb-4 border-b border-slate-100">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <Clock className="w-6 h-6 text-emerald-600" /> Grade de Horários
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1">Só você cria, edita ou remove turmas aqui. Os alunos só escolhem entre o que já está cadastrado.</p>
+                </div>
+                <button
+                  onClick={restaurarGradePadrao}
+                  className="text-xs font-semibold text-emerald-700 border border-emerald-200 px-3 py-2 rounded-lg hover:bg-emerald-50 transition shrink-0"
+                >
+                  Restaurar grade padrão
+                </button>
+              </div>
+
+              {erroTurma && (
+                <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{erroTurma}</span>
+                </div>
+              )}
+
+              <form onSubmit={adicionarTurma} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end bg-slate-50 p-4 rounded-lg border border-slate-200">
+                <div className="lg:col-span-1">
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Polo</label>
+                  <select
+                    value={novaTurma.local}
+                    onChange={(e) => setNovaTurma({ ...novaTurma, local: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {LOCALIZACOES.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+                  </select>
+                </div>
+                <div className="lg:col-span-1">
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Instrumento</label>
+                  <select
+                    value={novaTurma.instrumento}
+                    onChange={(e) => setNovaTurma({ ...novaTurma, instrumento: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {INSTRUMENTOS.map(i => <option key={i.id} value={i.id}>{i.nome}</option>)}
+                  </select>
+                </div>
+                <div className="lg:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Dia / Grupo</label>
+                  <input
+                    type="text"
+                    value={novaTurma.dia}
+                    onChange={(e) => setNovaTurma({ ...novaTurma, dia: e.target.value })}
+                    placeholder="Ex: Terça-feira, Sexta (Quinzenal)"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Início</label>
+                  <input
+                    type="time"
+                    value={novaTurma.inicio}
+                    onChange={(e) => setNovaTurma({ ...novaTurma, inicio: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Fim</label>
+                  <input
+                    type="time"
+                    value={novaTurma.fim}
+                    onChange={(e) => setNovaTurma({ ...novaTurma, fim: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Bloco (min)</label>
+                  <input
+                    type="number"
+                    min={10}
+                    step={5}
+                    value={novaTurma.duracao}
+                    onChange={(e) => setNovaTurma({ ...novaTurma, duracao: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="lg:col-span-6">
+                  <button
+                    type="submit"
+                    disabled={salvandoTurma}
+                    className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-sm disabled:opacity-60"
+                  >
+                    {salvandoTurma ? 'Salvando...' : 'Adicionar Turma'}
+                  </button>
+                </div>
+              </form>
+              <p className="text-xs text-slate-400 mt-2">
+                Pra um dia com intervalo (ex: almoço), cria duas turmas com o mesmo nome de dia e horários diferentes — elas aparecem juntas pro aluno.
+              </p>
+            </div>
+
+            {LOCALIZACOES.map((local) => {
+              const turmasDoLocal = turmasCadastradas.filter(t => t.local === local.id);
+              if (turmasDoLocal.length === 0) return null;
+              return (
+                <div key={local.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                  <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-emerald-600" /> {local.nome}
+                  </h3>
+                  <div className="space-y-2">
+                    {turmasDoLocal.map((t) => (
+                      <div key={t.id} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50">
+                        <div>
+                          <span className="text-xs font-semibold uppercase text-emerald-700">{t.instrumento === 'bateria' ? 'Bateria' : 'Violão'}</span>
+                          <p className="text-sm font-bold text-slate-800">{t.dia}</p>
+                          <p className="text-xs text-slate-500">
+                            {t.horarios?.[0]?.label?.split(' - ')[0]} até {t.horarios?.[t.horarios.length - 1]?.label?.split(' - ')[1]} · {t.horarios?.length || 0} vaga(s)
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => removerTurma(t.id)}
+                          className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1 shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Remover
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+
+            {turmasCadastradas.length === 0 && (
+              <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300 p-6">
+                <Clock className="w-12 h-12 text-slate-300 mx-auto mb-2" />
+                <p className="text-slate-500 font-medium">Nenhuma turma cadastrada ainda.</p>
+                <p className="text-xs text-slate-400 mt-1">Clique em "Restaurar grade padrão" acima ou crie a primeira turma no formulário.</p>
               </div>
             )}
           </div>
