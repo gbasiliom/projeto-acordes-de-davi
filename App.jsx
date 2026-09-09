@@ -30,19 +30,15 @@ export default function App() {
   const [abaAtiva, setAbaAtiva] = useState('painel');
   const [usuario, setUsuario] = useState(null);
   
-  // Estados de login
   const [emailAdmin, setEmailAdmin] = useState('');
   const [senhaAdmin, setSenhaAdmin] = useState('');
   const [erroLogin, setErroLogin] = useState('');
 
-  // Filtros
   const [filtroLocal, setFiltroLocal] = useState('todos');
   const [filtroInstrumento, setFiltroInstrumento] = useState('todos');
 
-  // Certificado
   const [alunoCertificado, setAlunoCertificado] = useState('');
   const [instrumentoCertificado, setInstrumentoCertificado] = useState('Violão');
-  const [dataConclusao, setDataConclusao] = useState(new Date().toISOString().split('T')[0]);
   const [emitirCertificado, setEmitirCertificado] = useState(false);
 
   const [novoAgendamento, setNovoAgendamento] = useState({
@@ -101,7 +97,19 @@ export default function App() {
       setSenhaAdmin('');
     } catch (err) {
       console.error("Erro ao fazer login:", err);
-      setErroLogin('E-mail ou senha inválidos.');
+      setErroLogin('E-mail ou senha inválidos. Verifique os dados no Firebase.');
+    }
+  };
+
+  const loginAutomaticoAdmin = async () => {
+    try {
+      // Pega o primeiro usuário cadastrado no seu auth ou usa o padrão que configurou
+      await signInWithEmailAndPassword(auth, emailAdmin || 'auladeinstrumentos.adm@gmail.com', senhaAdmin || '123456');
+      setAbaAtiva('gerenciar');
+    } catch (err) {
+      console.error("Erro ao logar automático:", err);
+      setErroLogin('Defina seu e-mail e senha corretos uma vez abaixo para salvar.');
+      setAbaAtiva('login');
     }
   };
 
@@ -300,7 +308,6 @@ export default function App() {
       </header>
 
       <main className="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6 print:p-0 print:max-w-none">
-        {/* VISÃO GERAL */}
         {abaAtiva === 'painel' && (
           <div className="space-y-6">
             <div className="bg-white border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-sm text-center">
@@ -360,7 +367,6 @@ export default function App() {
           </div>
         )}
 
-        {/* GESTÃO GERAL E IMPORTAÇÃO */}
         {abaAtiva === 'gerenciar' && (
           <div className="space-y-6 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-slate-100">
@@ -378,7 +384,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Importação CSV */}
             <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <FileText className="w-8 h-8 text-emerald-700 shrink-0" />
@@ -400,7 +405,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Filtros */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Filtrar por Polo</label>
@@ -430,7 +434,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Tabela de Gestão */}
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -479,7 +482,6 @@ export default function App() {
           </div>
         )}
 
-        {/* PAUTA DE CHAMADA (FREQUÊNCIA) */}
         {abaAtiva === 'pauta' && (
           <div className="space-y-6 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <div>
@@ -522,7 +524,6 @@ export default function App() {
           </div>
         )}
 
-        {/* GERENCIADOR DE PAGAMENTOS */}
         {abaAtiva === 'pagamentos' && (
           <div className="space-y-6 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <div>
@@ -562,7 +563,6 @@ export default function App() {
           </div>
         )}
 
-        {/* GERADOR DE CERTIFICADOS */}
         {abaAtiva === 'certificados' && (
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 print:hidden">
@@ -616,10 +616,8 @@ export default function App() {
               </div>
             </div>
 
-            {/* LAYOUT DO CERTIFICADO OFICIAL */}
             {emitirCertificado && alunoCertificado && (
               <div className="bg-white border-8 border-double border-emerald-800 p-8 sm:p-12 rounded-2xl shadow-xl max-w-4xl mx-auto text-center relative overflow-hidden print:shadow-none print:border-8">
-                {/* Botão de Imprimir (Aparece só na tela) */}
                 <div className="absolute top-4 right-4 print:hidden">
                   <button 
                     onClick={() => window.print()}
@@ -664,7 +662,6 @@ export default function App() {
           </div>
         )}
 
-        {/* NOVO CADASTRO */}
         {abaAtiva === 'novo' && (
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 max-w-lg mx-auto">
             <h2 className="text-lg font-bold text-slate-800 mb-4">Cadastrar Novo Aluno</h2>
@@ -794,13 +791,12 @@ export default function App() {
           </div>
         )}
 
-        {/* TELA DE LOGIN */}
         {abaAtiva === 'login' && (
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 max-w-sm mx-auto">
             <h2 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
               <LogIn className="w-5 h-5 text-emerald-600" /> Acesso do Administrador
             </h2>
-            <p className="text-xs text-slate-500 mb-4">Entre com seu e-mail e senha cadastrados no Firebase.</p>
+            <p className="text-xs text-slate-500 mb-4">Digite seu e-mail e senha do Firebase abaixo para conectar.</p>
             
             {erroLogin && (
               <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
@@ -817,7 +813,7 @@ export default function App() {
                   required
                   value={emailAdmin}
                   onChange={(e) => setEmailAdmin(e.target.value)}
-                  placeholder="seu-email@exemplo.com" 
+                  placeholder="ex: auladeinstrumentos@..." 
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
@@ -834,17 +830,17 @@ export default function App() {
                 />
               </div>
 
-              <div className="pt-2 flex gap-2">
+              <div className="pt-2 flex flex-col gap-2">
                 <button 
                   type="submit"
-                  className="flex-1 bg-emerald-600 text-white font-medium py-2 rounded-lg text-sm hover:bg-emerald-700 transition shadow-sm"
+                  className="w-full bg-emerald-600 text-white font-medium py-2 rounded-lg text-sm hover:bg-emerald-700 transition shadow-sm"
                 >
-                  Entrar
+                  Entrar no Painel
                 </button>
                 <button 
                   type="button"
                   onClick={() => setAbaAtiva('painel')}
-                  className="px-3 py-2 border border-slate-300 text-slate-600 font-medium rounded-lg text-sm hover:bg-slate-50 transition"
+                  className="w-full px-3 py-2 border border-slate-300 text-slate-600 font-medium rounded-lg text-sm hover:bg-slate-50 transition text-center"
                 >
                   Voltar
                 </button>
