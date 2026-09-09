@@ -5,9 +5,9 @@ import { getAuth, signInAnonymously, signInWithEmailAndPassword, signOut, onAuth
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 
 const LOCALIZACOES = [
-  { id: 'saoluiz', nome: 'São Luiz' },
-  { id: 'matafria', nome: 'Mata Fria / Penha do Côco' },
-  { id: 'chale', nome: 'Chalé' }
+  { id: 'saoluiz', nome: 'São Luiz', descricao: 'Aulas quinzenais — Violão às sextas, Bateria aos sábados.' },
+  { id: 'matafria', nome: 'Mata Fria / Penha do Côco', descricao: 'Bateria pela manhã e Violão à tarde, conforme a agenda de São Luiz.' },
+  { id: 'chale', nome: 'Chalé', descricao: 'Aulas de Violão aos domingos (quinzenal).' }
 ];
 
 const firebaseConfig = {
@@ -309,62 +309,107 @@ export default function App() {
 
       <main className="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6 print:p-0 print:max-w-none">
         {abaAtiva === 'painel' && (
-          <div className="space-y-6">
-            <div className="bg-white border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-sm text-center">
-              <p className="italic text-slate-700 font-medium">
-                "E sucedia que, quando o espírito maligno da parte de Deus vinha sobre Saul, Davi tomava a harpa, e a touxia com a sua mão; então Saul andava aliviado, e se sentia melhor, e o espírito maligno se retirava dele."
-              </p>
-              <span className="block mt-2 text-xs font-bold text-emerald-800 uppercase tracking-wide">1 Samuel 16:23</span>
-            </div>
+          usuario && !usuario.isAnonymous ? (
+            <div className="space-y-6">
+              <div className="bg-white border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-sm text-center">
+                <p className="italic text-slate-700 font-medium">
+                  "E sucedia que, quando o espírito maligno da parte de Deus vinha sobre Saul, Davi tomava a harpa, e a touxia com a sua mão; então Saul andava aliviado, e se sentia melhor, e o espírito maligno se retirava dele."
+                </p>
+                <span className="block mt-2 text-xs font-bold text-emerald-800 uppercase tracking-wide">1 Samuel 16:23</span>
+              </div>
 
-            <div className="flex justify-between items-center">
-              <h2 className="text-lg font-bold text-slate-700">Alunos e Aulas Cadastradas</h2>
-              <span className="text-xs bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full font-medium">
-                {agendamentos.length} {agendamentos.length === 1 ? 'aluno' : 'alunos'}
-              </span>
-            </div>
+              <div className="flex justify-between items-center">
+                <h2 className="text-lg font-bold text-slate-700">Alunos e Aulas Cadastradas</h2>
+                <span className="text-xs bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full font-medium">
+                  {agendamentos.length} {agendamentos.length === 1 ? 'aluno' : 'alunos'}
+                </span>
+              </div>
 
-            {loading ? (
-              <div className="text-center py-12 text-slate-400">Carregando dados em tempo real...</div>
-            ) : agendamentos.length === 0 ? (
-              <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300 p-6">
-                <Music className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-                <p className="text-slate-500 font-medium">Nenhum aluno cadastrado no sistema.</p>
-                <button 
+              {loading ? (
+                <div className="text-center py-12 text-slate-400">Carregando dados em tempo real...</div>
+              ) : agendamentos.length === 0 ? (
+                <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300 p-6">
+                  <Music className="w-12 h-12 text-slate-300 mx-auto mb-2" />
+                  <p className="text-slate-500 font-medium">Nenhum aluno cadastrado no sistema.</p>
+                  <button
+                    onClick={() => setAbaAtiva('novo')}
+                    className="mt-4 inline-flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition"
+                  >
+                    Cadastrar Primeiro Aluno
+                  </button>
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {agendamentos.map((item) => (
+                    <div key={item.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded uppercase">
+                            {LOCALIZACOES.find(l => l.id === item.local)?.nome || item.local}
+                          </span>
+                          <span className="text-xs text-slate-400 font-medium">{item.data || 'A combinar'} {item.horario ? `às ${item.horario}` : ''}</span>
+                        </div>
+                        <h3 className="font-bold text-slate-800 text-base">{item.nome}</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">Telefone: {item.telefone || 'Não informado'}</p>
+                      </div>
+                      <div className="mt-4 pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
+                        <div className="flex items-center gap-1.5">
+                          <Music className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="capitalize font-medium">{item.instrumento}</span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded font-medium ${item.pago ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {item.pago ? 'Pago' : 'Pendente'} ({item.tipoPagamento || 'pacote'})
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-8">
+              <div className="bg-white border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-sm text-center">
+                <p className="italic text-slate-700 font-medium">
+                  "E sucedia que, quando o espírito maligno da parte de Deus vinha sobre Saul, Davi tomava a harpa, e a touxia com a sua mão; então Saul andava aliviado, e se sentia melhor, e o espírito maligno se retirava dele."
+                </p>
+                <span className="block mt-2 text-xs font-bold text-emerald-800 uppercase tracking-wide">1 Samuel 16:23</span>
+              </div>
+
+              <div className="text-center max-w-2xl mx-auto space-y-3">
+                <h2 className="text-2xl sm:text-3xl font-bold text-slate-800">
+                  Projeto <span className="text-emerald-600">Acordes de Davi</span>
+                </h2>
+                <p className="text-slate-600 text-sm sm:text-base">
+                  A Música Transforma Vidas. Escolha o polo mais próximo de você, agende seu horário e venha fazer parte.
+                </p>
+                <button
                   onClick={() => setAbaAtiva('novo')}
-                  className="mt-4 inline-flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition"
+                  className="inline-flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-emerald-700 transition shadow-sm"
                 >
-                  Cadastrar Primeiro Aluno
+                  Ver Polos e Agendar
                 </button>
               </div>
-            ) : (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {agendamentos.map((item) => (
-                  <div key={item.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between">
-                    <div>
-                      <div className="flex justify-between items-start mb-2">
-                        <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded uppercase">
-                          {LOCALIZACOES.find(l => l.id === item.local)?.nome || item.local}
-                        </span>
-                        <span className="text-xs text-slate-400 font-medium">{item.data || 'A combinar'} {item.horario ? `às ${item.horario}` : ''}</span>
-                      </div>
-                      <h3 className="font-bold text-slate-800 text-base">{item.nome}</h3>
-                      <p className="text-xs text-slate-500 mt-0.5">Telefone: {item.telefone || 'Não informado'}</p>
-                    </div>
-                    <div className="mt-4 pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
-                      <div className="flex items-center gap-1.5">
-                        <Music className="w-3.5 h-3.5 text-emerald-600" />
-                        <span className="capitalize font-medium">{item.instrumento}</span>
-                      </div>
-                      <span className={`px-2 py-0.5 rounded font-medium ${item.pago ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {item.pago ? 'Pago' : 'Pendente'} ({item.tipoPagamento || 'pacote'})
-                      </span>
-                    </div>
+
+              <div className="grid gap-4 sm:grid-cols-3">
+                {LOCALIZACOES.map((local) => (
+                  <div key={local.id} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 text-center hover:shadow-md transition flex flex-col items-center">
+                    <MapPin className="w-8 h-8 text-emerald-600 mb-2" />
+                    <h3 className="font-bold text-slate-800">{local.nome}</h3>
+                    <p className="text-xs text-slate-500 mt-2 flex-1">{local.descricao}</p>
+                    <button
+                      onClick={() => {
+                        setNovoAgendamento((prev) => ({ ...prev, local: local.id }));
+                        setAbaAtiva('novo');
+                      }}
+                      className="mt-4 text-xs font-semibold text-emerald-700 hover:text-emerald-800 underline"
+                    >
+                      Agendar aqui
+                    </button>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
+            </div>
+          )
         )}
 
         {abaAtiva === 'gerenciar' && (
