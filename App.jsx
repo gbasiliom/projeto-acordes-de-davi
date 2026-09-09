@@ -524,6 +524,15 @@ export default function App() {
     reader.readAsText(file);
   };
 
+  // Alunos com horário fixo na grade nova (campos dia/horarioLabel) mostram o dia + horário;
+  // alunos do cadastro livre antigo (campos data/horario) mostram no formato antigo;
+  // só cai em "A combinar" quando não existe nenhum dos dois.
+  const formatarHorario = (item) => {
+    if (item.dia && item.horarioLabel) return `${item.dia} · ${item.horarioLabel}`;
+    if (item.data) return `${item.data} às ${item.horario}`;
+    return 'A combinar';
+  };
+
   const agendamentosFiltrados = agendamentos.filter(item => {
     const matchLocal = filtroLocal === 'todos' || item.local === filtroLocal;
     const matchInst = filtroInstrumento === 'todos' || item.instrumento === filtroInstrumento;
@@ -698,7 +707,7 @@ export default function App() {
                           <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded uppercase">
                             {LOCALIZACOES.find(l => l.id === item.local)?.nome || item.local}
                           </span>
-                          <span className="text-xs text-slate-400 font-medium">{item.data || 'A combinar'} {item.horario ? `às ${item.horario}` : ''}</span>
+                          <span className="text-xs text-slate-400 font-medium">{formatarHorario(item)}</span>
                         </div>
                         <h3 className="font-bold text-slate-800 text-base">{item.nome}</h3>
                         <p className="text-xs text-slate-500 mt-0.5">Telefone: {item.telefone || 'Não informado'}</p>
@@ -871,7 +880,7 @@ export default function App() {
                         <div className="text-xs capitalize text-slate-500">{item.instrumento}</div>
                       </td>
                       <td className="p-3 text-xs text-slate-600">
-                        {item.data ? `${item.data} às ${item.horario}` : 'A combinar'}
+                        {formatarHorario(item)}
                       </td>
                       <td className="p-3">
                         <span className={`text-xs px-2 py-1 rounded font-medium uppercase ${item.pago ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
