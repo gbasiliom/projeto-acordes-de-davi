@@ -17,12 +17,16 @@ const POLOS_PADRAO = [
   { id: 'chale', nome: 'Chalé', descricao: 'Aulas de Violão aos domingos (quinzenal).' }
 ];
 
-// Vira o nome de um polo num id curto sem espaço/acento (ex: "Praia Bonita" -> "praiabonita"),
-// no mesmo estilo dos ids já usados (saoluiz, matafria, chale).
-const slugificarPolo = (nome) => nome
+// Reduz um texto a só letras/números minúsculos, sem espaço/acento/pontuação
+// (ex: "Wemersom Daniel Braun " -> "wemersomdanielbraun") — usada tanto pra gerar o id
+// de um polo novo (mesmo estilo dos ids já usados: saoluiz, matafria, chale) quanto pra
+// comparar nome/telefone na hora de detectar cadastros duplicados.
+const normalizarTexto = (texto) => (texto || '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase()
   .replace(/[^a-z0-9]+/g, '');
+
+const slugificarPolo = normalizarTexto;
 
 const INSTRUMENTOS = [
   { id: 'violao', nome: 'Turma de Violão', Icone: Guitar },
@@ -383,45 +387,75 @@ export default function App() {
     }
   };
 
-  const handleFileUpload = (e) => {
+  // Restaura um backup .json (baixado pelo botão "Baixar Backup") — substitui TODOS os
+  // alunos, turmas e polos atuais pelos dados salvos naquele arquivo. Recria cada
+  // documento com o MESMO id que ele tinha no backup, pra manter intactas as referências
+  // (o slotId de um agendamento aponta pra um id em "vagas", por exemplo).
+  // Isso substitui o antigo "Importar CSV" genérico, que criava um registro novo pra
+  // cada linha sem checar se o aluno já existia — a causa mais provável dos duplicados.
+  const handleImportarBackup = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = async (event) => {
-      const text = event.target.result;
-      const lines = text.split('\n');
-      let importadosCount = 0;
-
-      for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-
-        const cols = line.split(/[,;]/).map(c => c.replace(/^["']|["']$/g, '').trim());
-        const [nome, telefone, local = 'saoluiz', instrumento = 'violao', data = '', horario = '', tipoPagamento = 'pacote'] = cols;
-
-        if (nome) {
-          try {
-            await addDoc(collection(db, 'agendamentos'), {
-              nome,
-              telefone: telefone || '',
-              local: local.toLowerCase().includes('mata') ? 'matafria' : local.toLowerCase().includes('chal') ? 'chale' : 'saoluiz',
-              instrumento: instrumento.toLowerCase().includes('bat') ? 'bateria' : 'violao',
-              data: data || '',
-              horario: horario || '',
-              presenca: false,
-              tipoPagamento: tipoPagamento.toLowerCase().includes('ind') ? 'individual' : 'pacote',
-              pago: false,
-              criadoEm: new Date().toISOString()
-            });
-            importadosCount++;
-          } catch (err) {
-            console.error("Erro ao importar linha:", err);
-          }
-        }
+      let backup;
+      try {
+        backup = JSON.parse(event.target.result);
+      } catch (err) {
+        setMensagemImportacao('Esse arquivo não é um backup válido (não é um .json legível).');
+        return;
       }
-      setMensagemImportacao(`${importadosCount} registros importados com sucesso da planilha!`);
-      setTimeout(() => setMensagemImportacao(''), 6000);
+
+      if (!Array.isArray(backup.agendamentos) || !Array.isArray(backup.turmas) || !Array.isArray(backup.polos)) {
+        setMensagemImportacao('Esse arquivo não parece ser um backup gerado pelo botão "Baixar Backup".');
+        return;
+      }
+
+      const dataBackup = backup.geradoEm ? new Date(backup.geradoEm).toLocaleString('pt-BR') : 'data desconhecida';
+      const confirmar = window.confirm(
+        `Isso vai APAGAR os cadastros atuais (${agendamentos.length} alunos, ${turmasCadastradas.length} turmas, ${polosCadastrados.length} polos salvos no Firestore) e substituir pelos dados do backup de ${dataBackup} (${backup.agendamentos.length} alunos, ${backup.turmas.length} turmas, ${backup.polos.length} polos). Essa ação não pode ser desfeita. Se não tiver certeza, cancela aqui e clica em "Baixar Backup" primeiro pra guardar o estado atual antes de restaurar. Continuar?`
+      );
+      if (!confirmar) return;
+
+      // A coleção "vagas" tem uma regra no Firestore que impede QUALQUER exclusão ou
+      // alteração dela por qualquer usuário, admin incluído (allow update, delete: if
+      // false — é assim de propósito, pra nunca liberar de novo um horário já ocupado
+      // sem querer). Por isso a restauração nunca apaga nem sobrescreve uma vaga que já
+      // existe — só cria as que estão no backup e ainda não existem agora. Efeito
+      // colateral: se o backup for de um momento com MENOS vagas ocupadas do que agora,
+      // as vagas ocupadas depois do backup continuam bloqueadas mesmo sem o agendamento
+      // correspondente — só dá pra liberar isso manualmente no Console do Firebase.
+      const vagasAtuais = new Set(vagasOcupadas);
+
+      try {
+        for (const item of agendamentos) await deleteDoc(doc(db, 'agendamentos', item.id));
+        for (const item of turmasCadastradas) await deleteDoc(doc(db, 'turmas', item.id));
+        for (const item of polosCadastrados) await deleteDoc(doc(db, 'polos', item.id));
+
+        for (const item of backup.agendamentos) {
+          const { id, ...dadosItem } = item;
+          await setDoc(doc(db, 'agendamentos', id), dadosItem);
+        }
+        for (const item of backup.turmas) {
+          const { id, ...dadosItem } = item;
+          await setDoc(doc(db, 'turmas', id), dadosItem);
+        }
+        for (const item of backup.polos) {
+          const { id, ...dadosItem } = item;
+          await setDoc(doc(db, 'polos', id), dadosItem);
+        }
+        for (const idVaga of (backup.vagasOcupadas || [])) {
+          if (vagasAtuais.has(idVaga)) continue;
+          await setDoc(doc(db, 'vagas', idVaga), { ocupado: true });
+        }
+
+        setMensagemImportacao(`Backup de ${dataBackup} restaurado: ${backup.agendamentos.length} alunos, ${backup.turmas.length} turmas e ${backup.polos.length} polos.`);
+        setTimeout(() => setMensagemImportacao(''), 15000);
+      } catch (err) {
+        console.error('Erro ao restaurar backup:', err);
+        setMensagemImportacao('Erro ao restaurar o backup — pode ter ficado parcialmente aplicado. Veja o console do navegador para detalhes.');
+      }
     };
     reader.readAsText(file);
   };
@@ -860,6 +894,23 @@ export default function App() {
     return matchLocal && matchInst;
   });
 
+  // Agrupa os alunos por nome + telefone normalizados (sem acento/espaço/maiúscula) e
+  // devolve só os grupos com mais de um registro — candidatos a cadastro duplicado.
+  // Só compara quando os dois campos existem, pra não arriscar juntar duas pessoas
+  // diferentes que só têm o nome parecido e nenhum telefone cadastrado.
+  const gruposDuplicados = useMemo(() => {
+    const mapa = new Map();
+    agendamentos.forEach(item => {
+      const chaveNome = normalizarTexto(item.nome);
+      const chaveTelefone = normalizarTexto(item.telefone);
+      if (!chaveNome || !chaveTelefone) return;
+      const chave = `${chaveNome}|${chaveTelefone}`;
+      if (!mapa.has(chave)) mapa.set(chave, []);
+      mapa.get(chave).push(item);
+    });
+    return Array.from(mapa.values()).filter(grupo => grupo.length > 1);
+  }, [agendamentos]);
+
   // Instrumentos que realmente têm turma cadastrada no polo escolhido (grade vem do Firestore agora)
   const instrumentosDoPolo = INSTRUMENTOS.filter(inst =>
     turmasCadastradas.some(t => t.local === poloSelecionado && t.instrumento === inst.id)
@@ -1154,13 +1205,13 @@ export default function App() {
               <div className="flex items-center gap-3">
                 <FileText className="w-8 h-8 text-emerald-700 shrink-0" />
                 <div>
-                  <h3 className="text-sm font-bold text-emerald-900">Importar Alunos via Planilha (CSV)</h3>
-                  <p className="text-xs text-emerald-700">Colunas: Nome, Telefone, Local, Instrumento, Data, Horário, TipoPagamento</p>
+                  <h3 className="text-sm font-bold text-emerald-900">Restaurar Backup (.json)</h3>
+                  <p className="text-xs text-emerald-700">Usa o arquivo baixado no botão "Baixar Backup" acima — substitui TODOS os alunos, turmas e polos atuais pelos dados daquele arquivo.</p>
                 </div>
               </div>
               <label className="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer transition shadow-sm inline-flex items-center gap-2 shrink-0">
-                <Upload className="w-4 h-4" /> Selecionar CSV
-                <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
+                <Upload className="w-4 h-4" /> Selecionar Backup
+                <input type="file" accept=".json" onChange={handleImportarBackup} className="hidden" />
               </label>
             </div>
 
@@ -1182,6 +1233,40 @@ export default function App() {
               <div className="bg-emerald-100 border border-emerald-300 text-emerald-900 p-3 rounded-lg text-xs flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-emerald-700 shrink-0" />
                 <span>{mensagemImportacao}</span>
+              </div>
+            )}
+
+            {gruposDuplicados.length > 0 && (
+              <div className="bg-red-50 border border-red-200 p-4 rounded-xl space-y-3">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
+                  <h3 className="text-sm font-bold text-red-900">
+                    {gruposDuplicados.length} possível{gruposDuplicados.length > 1 ? 'is' : ''} cadastro{gruposDuplicados.length > 1 ? 's' : ''} duplicado{gruposDuplicados.length > 1 ? 's' : ''} (mesmo nome + telefone)
+                  </h3>
+                </div>
+                <p className="text-xs text-red-700 -mt-2">Revise cada grupo e exclua o(s) registro(s) que não devem ficar. Nada é apagado automaticamente.</p>
+                <div className="space-y-3">
+                  {gruposDuplicados.map((grupo, i) => (
+                    <div key={i} className="bg-white border border-red-200 rounded-lg p-3">
+                      <p className="text-xs font-bold text-slate-700 mb-2">{grupo[0].nome} · {grupo[0].telefone}</p>
+                      <div className="space-y-1.5">
+                        {grupo.map(item => (
+                          <div key={item.id} className="flex items-center justify-between gap-3 text-xs bg-slate-50 border border-slate-200 rounded p-2">
+                            <span className="text-slate-600">
+                              {LOCALIZACOES.find(l => l.id === item.local)?.nome || item.local} · {item.instrumento} · {formatarHorario(item)} · {item.pago ? 'Pago' : 'Pendente'}
+                            </span>
+                            <button
+                              onClick={() => excluirAgendamento(item.id)}
+                              className="bg-red-50 hover:bg-red-100 text-red-600 px-2.5 py-1 rounded text-xs font-medium transition inline-flex items-center gap-1 shrink-0"
+                            >
+                              <Trash2 className="w-3 h-3" /> Excluir este
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
