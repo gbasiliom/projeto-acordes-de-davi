@@ -7,11 +7,22 @@ import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, u
 // E-mail que tem acesso de administrador. Todo outro login vira "aluno".
 const ADMIN_EMAIL = 'auladeinstrumentosmusicais2026@gmail.com';
 
-const LOCALIZACOES = [
+// Polos padrão — usados só como "semente" pra popular a coleção "polos" do Firestore
+// na primeira vez (botão "Restaurar polos padrão" na aba Horários). A partir daí, quem
+// manda na lista de polos é o admin, pela tela — não mais o código (igual já funciona
+// pra grade de turmas/horários).
+const POLOS_PADRAO = [
   { id: 'saoluiz', nome: 'São Luiz', descricao: 'Aulas quinzenais — Violão às sextas, Bateria aos sábados.' },
   { id: 'matafria', nome: 'Mata Fria / Penha do Côco', descricao: 'Bateria pela manhã e Violão à tarde, conforme a agenda de São Luiz.' },
   { id: 'chale', nome: 'Chalé', descricao: 'Aulas de Violão aos domingos (quinzenal).' }
 ];
+
+// Vira o nome de um polo num id curto sem espaço/acento (ex: "Praia Bonita" -> "praiabonita"),
+// no mesmo estilo dos ids já usados (saoluiz, matafria, chale).
+const slugificarPolo = (nome) => nome
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '');
 
 const INSTRUMENTOS = [
   { id: 'violao', nome: 'Turma de Violão', Icone: Guitar },
@@ -96,11 +107,18 @@ export default function App() {
   const [agendamentos, setAgendamentos] = useState([]);
   const [vagasOcupadas, setVagasOcupadas] = useState([]);
   const [turmasCadastradas, setTurmasCadastradas] = useState([]);
+  const [polosCadastrados, setPolosCadastrados] = useState([]);
 
   // --- Gestão de horários (admin) ---
   const [novaTurma, setNovaTurma] = useState({ local: 'saoluiz', instrumento: 'violao', dia: '', inicio: '', fim: '', duracao: 40 });
   const [erroTurma, setErroTurma] = useState('');
   const [salvandoTurma, setSalvandoTurma] = useState(false);
+
+  // --- Gestão de polos (admin) ---
+  const [novoPolo, setNovoPolo] = useState({ nome: '', descricao: '' });
+  const [erroPolo, setErroPolo] = useState('');
+  const [salvandoPolo, setSalvandoPolo] = useState(false);
+  const [editandoPolo, setEditandoPolo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [abaAtiva, setAbaAtiva] = useState('painel');
   const [usuario, setUsuario] = useState(null);
@@ -179,11 +197,20 @@ export default function App() {
       console.error("Erro ao buscar turmas:", error);
     });
 
+    // Lista de polos (locais de ensino) — pública pra leitura, só o admin pode
+    // criar/editar/remover. É o que decide quais polos aparecem pro aluno escolher.
+    const unsubPolos = onSnapshot(collection(db, 'polos'), (snapshot) => {
+      setPolosCadastrados(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.error("Erro ao buscar polos:", error);
+    });
+
     return () => {
       unsubAuth();
       unsubscribe();
       unsubVagas();
       unsubTurmas();
+      unsubPolos();
     };
   }, []);
 
@@ -680,6 +707,101 @@ export default function App() {
     }
   };
 
+  // Cria um novo polo (local de ensino) — só o admin consegue (regra do Firestore).
+  // O id do documento é um "slug" gerado do nome (ex: "Praia Bonita" -> "praiabonita"),
+  // no mesmo padrão dos polos que já existem, pra ficar compatível com o campo "local"
+  // usado em turmas e agendamentos.
+  const adicionarPolo = async (e) => {
+    e.preventDefault();
+    setErroPolo('');
+
+    const nome = novoPolo.nome.trim();
+    if (!nome) {
+      setErroPolo('Preencha o nome do polo.');
+      return;
+    }
+    let id = slugificarPolo(nome);
+    if (!id) {
+      setErroPolo('Esse nome não gera um identificador válido — use letras ou números.');
+      return;
+    }
+    if (polosCadastrados.some(p => p.id === id)) {
+      let sufixo = 2;
+      while (polosCadastrados.some(p => p.id === `${id}${sufixo}`)) sufixo++;
+      id = `${id}${sufixo}`;
+    }
+
+    setSalvandoPolo(true);
+    try {
+      await setDoc(doc(db, 'polos', id), {
+        nome,
+        descricao: novoPolo.descricao.trim(),
+        criadoEm: new Date().toISOString()
+      });
+      setNovoPolo({ nome: '', descricao: '' });
+    } catch (err) {
+      console.error('Erro ao criar polo:', err);
+      setErroPolo('Erro ao salvar o polo. Tente novamente.');
+    } finally {
+      setSalvandoPolo(false);
+    }
+  };
+
+  const iniciarEdicaoPolo = (polo) => setEditandoPolo({ id: polo.id, nome: polo.nome, descricao: polo.descricao || '' });
+  const cancelarEdicaoPolo = () => setEditandoPolo(null);
+
+  const salvarEdicaoPolo = async (e) => {
+    e.preventDefault();
+    if (!editandoPolo.nome.trim()) return;
+    try {
+      await updateDoc(doc(db, 'polos', editandoPolo.id), {
+        nome: editandoPolo.nome.trim(),
+        descricao: editandoPolo.descricao.trim()
+      });
+      setEditandoPolo(null);
+    } catch (err) {
+      console.error('Erro ao editar polo:', err);
+      alert('Erro ao salvar as alterações do polo.');
+    }
+  };
+
+  const removerPolo = async (polo) => {
+    const turmasDoPolo = turmasCadastradas.filter(t => t.local === polo.id);
+    const aviso = turmasDoPolo.length > 0
+      ? `Esse polo tem ${turmasDoPolo.length} turma(s) na grade de horários e pode ter alunos já agendados nele. Remover o polo NÃO apaga as turmas nem os agendamentos — eles só ficam "órfãos" (sem o nome do polo aparecendo certo). O recomendado é remover as turmas desse polo primeiro, na seção "Grade de Horários" abaixo. Remover o polo "${polo.nome}" mesmo assim?`
+      : `Remover o polo "${polo.nome}"?`;
+    if (!window.confirm(aviso)) return;
+    try {
+      await deleteDoc(doc(db, 'polos', polo.id));
+    } catch (err) {
+      console.error('Erro ao remover polo:', err);
+      alert('Erro ao remover o polo.');
+    }
+  };
+
+  // Popula a coleção "polos" com a lista original (só útil na primeira vez que essa
+  // versão for publicada, ou pra recriar algum polo apagado por engano) — nunca duplica.
+  const restaurarPolosPadrao = async () => {
+    const faltando = POLOS_PADRAO.filter(def => !polosCadastrados.some(p => p.id === def.id));
+    if (faltando.length === 0) {
+      alert('Os polos padrão já estão todos cadastrados.');
+      return;
+    }
+    if (!window.confirm(`Isso vai criar ${faltando.length} polo(s) padrão que ainda não existem (${faltando.map(f => f.nome).join(', ')}). Continuar?`)) return;
+    try {
+      for (const def of faltando) {
+        await setDoc(doc(db, 'polos', def.id), {
+          nome: def.nome,
+          descricao: def.descricao,
+          criadoEm: new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.error('Erro ao restaurar polos padrão:', err);
+      alert('Erro ao restaurar os polos padrão.');
+    }
+  };
+
   const agendamentosFiltrados = agendamentos.filter(item => {
     const matchLocal = filtroLocal === 'todos' || item.local === filtroLocal;
     const matchInst = filtroInstrumento === 'todos' || item.instrumento === filtroInstrumento;
@@ -733,6 +855,11 @@ export default function App() {
   // Agendamentos do próprio aluno logado (as regras do Firestore já garantem
   // que "agendamentos" só traz os dele quando não é admin, mas filtramos de novo por clareza)
   const meusAgendamentos = usuario ? agendamentos.filter(item => item.uid === usuario.uid) : [];
+
+  // A partir daqui, "LOCALIZACOES" é a lista de polos que vem do Firestore (editável
+  // pelo admin na aba Horários), não mais a constante fixa do código — todo o resto do
+  // arquivo que já usa "LOCALIZACOES" passa a refletir isso automaticamente.
+  const LOCALIZACOES = polosCadastrados;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
@@ -1261,6 +1388,120 @@ export default function App() {
 
         {abaAtiva === 'horarios' && (
           <div className="space-y-6 max-w-4xl mx-auto">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 pb-4 border-b border-slate-100">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <MapPin className="w-6 h-6 text-emerald-600" /> Polos de Ensino
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1">Crie, renomeie ou remova os polos que aparecem pros alunos escolherem.</p>
+                </div>
+                <button
+                  onClick={restaurarPolosPadrao}
+                  className="text-xs font-semibold text-emerald-700 border border-emerald-200 px-3 py-2 rounded-lg hover:bg-emerald-50 transition shrink-0"
+                >
+                  Restaurar polos padrão
+                </button>
+              </div>
+
+              {erroPolo && (
+                <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{erroPolo}</span>
+                </div>
+              )}
+
+              <form onSubmit={adicionarPolo} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end bg-slate-50 p-4 rounded-lg border border-slate-200 mb-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nome do Polo</label>
+                  <input
+                    type="text"
+                    value={novoPolo.nome}
+                    onChange={(e) => setNovoPolo({ ...novoPolo, nome: e.target.value })}
+                    placeholder="Ex: Praia Bonita"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Descrição (opcional)</label>
+                  <input
+                    type="text"
+                    value={novoPolo.descricao}
+                    onChange={(e) => setNovoPolo({ ...novoPolo, descricao: e.target.value })}
+                    placeholder="Ex: Aulas de violão às quartas, à tarde"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <button
+                    type="submit"
+                    disabled={salvandoPolo}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-sm disabled:opacity-60"
+                  >
+                    {salvandoPolo ? 'Salvando...' : 'Adicionar Polo'}
+                  </button>
+                </div>
+              </form>
+
+              <div className="space-y-2">
+                {polosCadastrados.map((polo) => (
+                  <div key={polo.id} className="p-3 rounded-lg border border-slate-200 bg-slate-50">
+                    {editandoPolo?.id === polo.id ? (
+                      <form onSubmit={salvarEdicaoPolo} className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                        <input
+                          type="text"
+                          value={editandoPolo.nome}
+                          onChange={(e) => setEditandoPolo({ ...editandoPolo, nome: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                        />
+                        <input
+                          type="text"
+                          value={editandoPolo.descricao}
+                          onChange={(e) => setEditandoPolo({ ...editandoPolo, descricao: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                        />
+                        <div className="flex gap-2">
+                          <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-semibold transition">Salvar</button>
+                          <button type="button" onClick={cancelarEdicaoPolo} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-semibold transition">Cancelar</button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">{polo.nome}</p>
+                          <p className="text-xs text-slate-500">{polo.descricao || 'Sem descrição'}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {turmasCadastradas.filter(t => t.local === polo.id).length} turma(s) cadastrada(s)
+                          </p>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <button
+                            onClick={() => iniciarEdicaoPolo(polo)}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            onClick={() => removerPolo(polo)}
+                            className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Remover
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {polosCadastrados.length === 0 && (
+                  <div className="text-center py-8 bg-slate-50 rounded-lg border border-dashed border-slate-300">
+                    <MapPin className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                    <p className="text-slate-500 font-medium text-sm">Nenhum polo cadastrado ainda.</p>
+                    <p className="text-xs text-slate-400 mt-1">Clique em "Restaurar polos padrão" ou crie o primeiro polo no formulário acima.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 pb-4 border-b border-slate-100">
                 <div>
