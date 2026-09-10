@@ -356,13 +356,30 @@ export default function App() {
     }
   };
 
+  // Exclui o cadastro e, na sequência, libera o horário dele (apaga o documento
+  // correspondente em "vagas") pra outro aluno poder pegar essa vaga depois. A exclusão
+  // do aluno sempre acontece primeiro e sozinha; se a vaga não conseguir ser liberada
+  // (ex: a regra do Firestore ainda não foi atualizada pra permitir isso), o aluno já
+  // saiu da lista mesmo assim — só o horário continua bloqueado até você resolver isso.
   const excluirAgendamento = async (id) => {
-    if (window.confirm('Tem certeza que deseja excluir este registro?')) {
+    if (!window.confirm('Tem certeza que deseja excluir este registro? Isso também libera o horário dele pra outro aluno.')) return;
+
+    const item = agendamentos.find(a => a.id === id);
+    try {
+      await deleteDoc(doc(db, 'agendamentos', id));
+    } catch (err) {
+      console.error("Erro ao excluir:", err);
+      alert('Erro ao excluir registro.');
+      return;
+    }
+
+    if (item?.slotId) {
       try {
-        await deleteDoc(doc(db, 'agendamentos', id));
-      } catch (err) {
-        console.error("Erro ao excluir:", err);
-        alert('Erro ao excluir registro.');
+        await deleteDoc(doc(db, 'vagas', item.slotId));
+      } catch (errVaga) {
+        console.error('Erro ao liberar a vaga:', errVaga);
+        setMensagemImportacao('Aluno excluído, mas não consegui liberar o horário dele automaticamente — confira se a regra do Firestore pra "vagas" já permite exclusão pelo admin.');
+        setTimeout(() => setMensagemImportacao(''), 10000);
       }
     }
   };
@@ -592,6 +609,13 @@ export default function App() {
 
         for (const antigo of antigosSaoLuiz) {
           await deleteDoc(doc(db, 'agendamentos', antigo.id));
+          if (antigo.slotId) {
+            try {
+              await deleteDoc(doc(db, 'vagas', antigo.slotId));
+            } catch (errVaga) {
+              console.error('Erro ao liberar vaga antiga do São Luiz:', errVaga);
+            }
+          }
         }
 
         for (const registro of [...prontosViolao, ...prontosBateria]) {
