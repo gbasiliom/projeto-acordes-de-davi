@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer } from 'lucide-react';
+import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
@@ -707,6 +707,26 @@ export default function App() {
     }
   };
 
+  // Lista final de polos: começa dos polos padrão (fixos no código, sempre existem,
+  // nunca somem por falta de dado no Firestore) e aplica por cima o que estiver salvo
+  // na coleção "polos" — uma edição de nome/descrição de um polo padrão, uma marca de
+  // "removido" nele, ou um polo novo criado pelo admin (id que não é dos padrão).
+  // Assim, se a coleção "polos" estiver vazia (app recém-publicado, ninguém clicou em
+  // nada ainda), os três polos de sempre continuam aparecendo — nada desaparece.
+  const idsPadrao = new Set(POLOS_PADRAO.map(def => def.id));
+  const LOCALIZACOES = [
+    ...POLOS_PADRAO
+      .map(def => {
+        const salvo = polosCadastrados.find(p => p.id === def.id);
+        if (salvo?.removido) return null;
+        return salvo ? { id: def.id, nome: salvo.nome ?? def.nome, descricao: salvo.descricao ?? def.descricao } : def;
+      })
+      .filter(Boolean),
+    ...polosCadastrados
+      .filter(p => !idsPadrao.has(p.id) && !p.removido)
+      .map(p => ({ id: p.id, nome: p.nome, descricao: p.descricao }))
+  ];
+
   // Cria um novo polo (local de ensino) — só o admin consegue (regra do Firestore).
   // O id do documento é um "slug" gerado do nome (ex: "Praia Bonita" -> "praiabonita"),
   // no mesmo padrão dos polos que já existem, pra ficar compatível com o campo "local"
@@ -725,9 +745,10 @@ export default function App() {
       setErroPolo('Esse nome não gera um identificador válido — use letras ou números.');
       return;
     }
-    if (polosCadastrados.some(p => p.id === id)) {
+    const idsExistentes = new Set([...idsPadrao, ...polosCadastrados.map(p => p.id)]);
+    if (idsExistentes.has(id)) {
       let sufixo = 2;
-      while (polosCadastrados.some(p => p.id === `${id}${sufixo}`)) sufixo++;
+      while (idsExistentes.has(`${id}${sufixo}`)) sufixo++;
       id = `${id}${sufixo}`;
     }
 
@@ -750,14 +771,17 @@ export default function App() {
   const iniciarEdicaoPolo = (polo) => setEditandoPolo({ id: polo.id, nome: polo.nome, descricao: polo.descricao || '' });
   const cancelarEdicaoPolo = () => setEditandoPolo(null);
 
+  // Usa setDoc com merge (em vez de updateDoc) porque um polo padrão pode ainda não
+  // ter documento nenhum no Firestore — updateDoc daria erro "no document to update"
+  // na primeira edição dele. Com merge, cria se não existir e atualiza se já existir.
   const salvarEdicaoPolo = async (e) => {
     e.preventDefault();
     if (!editandoPolo.nome.trim()) return;
     try {
-      await updateDoc(doc(db, 'polos', editandoPolo.id), {
+      await setDoc(doc(db, 'polos', editandoPolo.id), {
         nome: editandoPolo.nome.trim(),
         descricao: editandoPolo.descricao.trim()
-      });
+      }, { merge: true });
       setEditandoPolo(null);
     } catch (err) {
       console.error('Erro ao editar polo:', err);
@@ -765,6 +789,10 @@ export default function App() {
     }
   };
 
+  // Um polo criado pelo admin (não é dos padrão) pode ser apagado de verdade — não
+  // existe em outro lugar. Já um polo padrão precisa de uma "marca" (removido: true)
+  // em vez de apagar, porque ele reapareceria de novo pelo POLOS_PADRAO no próximo
+  // carregamento se só apagássemos o documento (ou se nunca existiu documento).
   const removerPolo = async (polo) => {
     const turmasDoPolo = turmasCadastradas.filter(t => t.local === polo.id);
     const aviso = turmasDoPolo.length > 0
@@ -772,34 +800,58 @@ export default function App() {
       : `Remover o polo "${polo.nome}"?`;
     if (!window.confirm(aviso)) return;
     try {
-      await deleteDoc(doc(db, 'polos', polo.id));
+      if (idsPadrao.has(polo.id)) {
+        await setDoc(doc(db, 'polos', polo.id), { removido: true }, { merge: true });
+      } else {
+        await deleteDoc(doc(db, 'polos', polo.id));
+      }
     } catch (err) {
       console.error('Erro ao remover polo:', err);
       alert('Erro ao remover o polo.');
     }
   };
 
-  // Popula a coleção "polos" com a lista original (só útil na primeira vez que essa
-  // versão for publicada, ou pra recriar algum polo apagado por engano) — nunca duplica.
+  // Desfaz qualquer edição/remoção feita nos polos padrão, voltando ao nome/descrição
+  // original do código — apaga o documento de "override" deles no Firestore, se existir.
   const restaurarPolosPadrao = async () => {
-    const faltando = POLOS_PADRAO.filter(def => !polosCadastrados.some(p => p.id === def.id));
-    if (faltando.length === 0) {
-      alert('Os polos padrão já estão todos cadastrados.');
+    const alterados = POLOS_PADRAO.filter(def => polosCadastrados.some(p => p.id === def.id));
+    if (alterados.length === 0) {
+      alert('Os polos padrão já estão todos no estado original.');
       return;
     }
-    if (!window.confirm(`Isso vai criar ${faltando.length} polo(s) padrão que ainda não existem (${faltando.map(f => f.nome).join(', ')}). Continuar?`)) return;
+    if (!window.confirm(`Isso vai desfazer edições/remoções feitas nos polos padrão (${alterados.map(a => a.nome).join(', ')}), voltando ao nome e descrição originais. Continuar?`)) return;
     try {
-      for (const def of faltando) {
-        await setDoc(doc(db, 'polos', def.id), {
-          nome: def.nome,
-          descricao: def.descricao,
-          criadoEm: new Date().toISOString()
-        });
+      for (const def of alterados) {
+        await deleteDoc(doc(db, 'polos', def.id));
       }
     } catch (err) {
       console.error('Erro ao restaurar polos padrão:', err);
       alert('Erro ao restaurar os polos padrão.');
     }
+  };
+
+  // Baixa um arquivo .json com uma foto de tudo que está carregado agora (alunos,
+  // turmas, polos e vagas ocupadas) — não faz nenhuma leitura extra no Firestore, só
+  // empacota o que os listeners já trouxeram. Serve de segurança antes de qualquer
+  // mudança grande (trocar grade, importar planilha, editar/remover um polo etc.).
+  const fazerBackup = () => {
+    const backup = {
+      geradoEm: new Date().toISOString(),
+      agendamentos,
+      turmas: turmasCadastradas,
+      polos: polosCadastrados,
+      vagasOcupadas
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const dataFormatada = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `backup-acordes-de-davi-${dataFormatada}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const agendamentosFiltrados = agendamentos.filter(item => {
@@ -855,11 +907,6 @@ export default function App() {
   // Agendamentos do próprio aluno logado (as regras do Firestore já garantem
   // que "agendamentos" só traz os dele quando não é admin, mas filtramos de novo por clareza)
   const meusAgendamentos = usuario ? agendamentos.filter(item => item.uid === usuario.uid) : [];
-
-  // A partir daqui, "LOCALIZACOES" é a lista de polos que vem do Firestore (editável
-  // pelo admin na aba Horários), não mais a constante fixa do código — todo o resto do
-  // arquivo que já usa "LOCALIZACOES" passa a refletir isso automaticamente.
-  const LOCALIZACOES = polosCadastrados;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
@@ -1086,12 +1133,21 @@ export default function App() {
                 </h2>
                 <p className="text-xs text-slate-500">Gerencie todos os cadastros ou importe sua planilha (CSV).</p>
               </div>
-              <button 
-                onClick={() => setAbaAtiva('novo')}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
-              >
-                <PlusCircle className="w-4 h-4" /> Adicionar Novo Aluno
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={fazerBackup}
+                  title="Baixa um arquivo com tudo que está cadastrado agora — alunos, turmas e polos"
+                  className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
+                >
+                  <Download className="w-4 h-4" /> Baixar Backup
+                </button>
+                <button
+                  onClick={() => setAbaAtiva('novo')}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
+                >
+                  <PlusCircle className="w-4 h-4" /> Adicionar Novo Aluno
+                </button>
+              </div>
             </div>
 
             <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -1444,7 +1500,7 @@ export default function App() {
               </form>
 
               <div className="space-y-2">
-                {polosCadastrados.map((polo) => (
+                {LOCALIZACOES.map((polo) => (
                   <div key={polo.id} className="p-3 rounded-lg border border-slate-200 bg-slate-50">
                     {editandoPolo?.id === polo.id ? (
                       <form onSubmit={salvarEdicaoPolo} className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
@@ -1492,7 +1548,7 @@ export default function App() {
                     )}
                   </div>
                 ))}
-                {polosCadastrados.length === 0 && (
+                {LOCALIZACOES.length === 0 && (
                   <div className="text-center py-8 bg-slate-50 rounded-lg border border-dashed border-slate-300">
                     <MapPin className="w-10 h-10 text-slate-300 mx-auto mb-2" />
                     <p className="text-slate-500 font-medium text-sm">Nenhum polo cadastrado ainda.</p>
