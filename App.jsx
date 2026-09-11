@@ -168,6 +168,12 @@ export default function App() {
   const [quantidadeAulasRecibo, setQuantidadeAulasRecibo] = useState(1);
   const [valorRecibo, setValorRecibo] = useState('');
 
+  // --- Pagamento via Pix, direto no site (Mercado Pago) ---
+  const [pixEmAndamento, setPixEmAndamento] = useState(null); // id do agendamento com Pix aberto
+  const [dadosPix, setDadosPix] = useState(null); // { qrCode, qrCodeBase64, paymentId, valor }
+  const [erroPix, setErroPix] = useState('');
+  const [gerandoPix, setGerandoPix] = useState(false);
+
   // --- Assistente de cadastro e agendamento (aluno) ---
   const [poloSelecionado, setPoloSelecionado] = useState('');
   const [instrumentoSelecionado, setInstrumentoSelecionado] = useState('');
@@ -491,12 +497,59 @@ export default function App() {
   };
 
   // Abre o recibo já com um valor sugerido (editável) — chamado assim que o pagamento
-  // combinado tem uma data definida, direto do card do aluno na aba Pagamentos.
+  // combinado tem uma data definida, direto do card do aluno na aba Pagamentos. Se você já
+  // combinou um valor específico (campo "Valor combinado" mais abaixo), usa ele em vez do
+  // valor padrão do tipo, pra bater com o que realmente foi cobrado.
   const abrirRecibo = (item) => {
     const polo = LOCALIZACOES.find(l => l.id === item.local);
     setQuantidadeAulasRecibo(1);
-    setValorRecibo(String(valorSugeridoRecibo(item, polo, 1)));
+    const valorPadrao = item.valorCombinado != null && item.valorCombinado !== ''
+      ? item.valorCombinado
+      : valorSugeridoRecibo(item, polo, 1);
+    setValorRecibo(String(valorPadrao));
     setItemRecibo(item);
+  };
+
+  // Valor combinado é o que vira a cobrança via Pix online (botão "Pagar com Pix" no
+  // Portal do Aluno) — fica separado do valor do recibo pra você poder ajustar/confirmar
+  // antes de liberar a cobrança pro aluno pagar sozinho.
+  const alterarValorCombinado = async (id, novoValor) => {
+    try {
+      const valor = novoValor === '' ? null : Number(novoValor);
+      await updateDoc(doc(db, 'agendamentos', id), { valorCombinado: valor });
+    } catch (err) {
+      console.error('Erro ao alterar valor combinado:', err);
+      alert('Erro ao salvar o valor combinado.');
+    }
+  };
+
+  // Chama a função serverless /api/mercadopago/criar-pix (Vercel) que gera a cobrança
+  // Pix de verdade no Mercado Pago. Só funciona depois que o admin definir o "Valor
+  // combinado" desse agendamento e depois que as variáveis de ambiente do Mercado Pago
+  // e do Firebase Admin estiverem configuradas na Vercel (ver PAGAMENTO_PIX_SETUP.md).
+  const pagarComPix = async (item) => {
+    setErroPix('');
+    setDadosPix(null);
+    setGerandoPix(true);
+    try {
+      const idToken = await usuario.getIdToken();
+      const resposta = await fetch('/api/mercadopago/criar-pix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ agendamentoId: item.id, email: usuario.email })
+      });
+      const dados = await resposta.json();
+      if (!resposta.ok) {
+        throw new Error(dados?.erro || 'Não foi possível gerar o Pix agora.');
+      }
+      setDadosPix(dados);
+      setPixEmAndamento(item.id);
+    } catch (err) {
+      console.error('Erro ao gerar Pix:', err);
+      setErroPix(err.message || 'Não foi possível gerar o Pix agora. Tente novamente em instantes.');
+    } finally {
+      setGerandoPix(false);
+    }
   };
 
   // Restaura um backup .json (baixado pelo botão "Baixar Backup") — substitui TODOS os
@@ -1080,6 +1133,19 @@ export default function App() {
   // que "agendamentos" só traz os dele quando não é admin, mas filtramos de novo por clareza)
   const meusAgendamentos = usuario ? agendamentos.filter(item => item.uid === usuario.uid) : [];
 
+  // Assim que o webhook do Mercado Pago confirmar o pagamento (marcando "pago" no
+  // Firestore), o onSnapshot dos agendamentos já traz isso em tempo real — então só
+  // fecha sozinho a tela do QR Code do Pix quando detectar que aquele agendamento virou
+  // pago, sem precisar o aluno recarregar a página.
+  useEffect(() => {
+    if (!pixEmAndamento) return;
+    const item = agendamentos.find(a => a.id === pixEmAndamento);
+    if (item && item.pago) {
+      setPixEmAndamento(null);
+      setDadosPix(null);
+    }
+  }, [agendamentos, pixEmAndamento]);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
       <header className="bg-emerald-800 text-white shadow-md print:hidden">
@@ -1598,6 +1664,31 @@ export default function App() {
                       onChange={(e) => alterarDataPagamento(item.id, e.target.value)}
                       className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Valor combinado (R$) — pro Pix online</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={item.valorCombinado ?? ''}
+                        onChange={(e) => alterarValorCombinado(item.id, e.target.value)}
+                        placeholder="0,00"
+                        className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => alterarValorCombinado(item.id, String(valorSugeridoRecibo(item, LOCALIZACOES.find(l => l.id === item.local))))}
+                        className="shrink-0 text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap"
+                      >
+                        usar sugestão
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      {item.valorCombinado ? 'O aluno já pode pagar esse valor pelo Portal do Aluno.' : 'Sem valor definido, o aluno não vê o botão de pagar online ainda.'}
+                    </p>
                   </div>
 
                   <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
@@ -2376,8 +2467,63 @@ export default function App() {
                         <p className="text-xs text-emerald-200 mt-3">
                           {item.pago ? 'Pagamento em dia.' : 'Pagamento pendente — fale com a coordenação.'}
                         </p>
+
+                        {!item.pago && (
+                          item.valorCombinado ? (
+                            <button
+                              onClick={() => pagarComPix(item)}
+                              disabled={gerandoPix}
+                              className="mt-3 w-full bg-white hover:bg-emerald-50 disabled:opacity-60 text-emerald-800 px-3 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
+                            >
+                              <DollarSign className="w-3.5 h-3.5" />
+                              {gerandoPix && pixEmAndamento !== item.id ? 'Gerando Pix...' : `Pagar ${formatarBRL(item.valorCombinado)} com Pix`}
+                            </button>
+                          ) : (
+                            <p className="text-[11px] text-emerald-300 mt-3 italic">Aguardando a coordenação combinar o valor do pagamento.</p>
+                          )
+                        )}
                       </div>
                     ))}
+
+                    {erroPix && (
+                      <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>{erroPix}</span>
+                      </div>
+                    )}
+
+                    {dadosPix && (
+                      <div className="bg-white border-4 border-double border-emerald-700 rounded-2xl p-6 text-center shadow-xl">
+                        <h3 className="text-base font-bold text-emerald-900 mb-1">Pagamento via Pix</h3>
+                        <p className="text-xs text-slate-500 mb-4">Escaneie o QR Code ou copie o código no app do seu banco.</p>
+                        {dadosPix.qrCodeBase64 && (
+                          <img
+                            src={`data:image/png;base64,${dadosPix.qrCodeBase64}`}
+                            alt="QR Code Pix"
+                            className="mx-auto mb-4 w-48 h-48 rounded-lg border border-slate-200"
+                          />
+                        )}
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(dadosPix.qrCode || '');
+                            setMensagemSucesso('Código Pix copiado!');
+                            setTimeout(() => setMensagemSucesso(''), 3000);
+                          }}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition mb-2"
+                        >
+                          Copiar código Pix
+                        </button>
+                        <button
+                          onClick={() => { setDadosPix(null); setPixEmAndamento(null); }}
+                          className="w-full text-xs text-slate-500 hover:text-slate-700 transition"
+                        >
+                          Cancelar
+                        </button>
+                        <p className="text-[11px] text-slate-400 mt-4">
+                          A confirmação é automática — assim que o pagamento cair, essa tela fecha sozinha e o status muda pra "Pagamento em dia".
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="lg:col-span-2 bg-white rounded-xl shadow-sm p-6 border border-slate-200">
