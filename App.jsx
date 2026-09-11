@@ -33,6 +33,31 @@ const INSTRUMENTOS = [
   { id: 'bateria', nome: 'Turma de Bateria', Icone: Music }
 ];
 
+// Valores fixos usados como SUGESTÃO automática ao gerar um recibo — o campo de valor
+// no recibo sempre fica editável, então isso nunca trava um caso fora da regra.
+// Pacote é por polo (chave = id do polo); polo pacote que não está no mapa (ex: um polo
+// novo criado pela tela, ou o Tabernáculo/Penha do Côco) cai no valor padrão de pacote.
+const VALOR_PACOTE_POR_POLO = {
+  saoluiz: 600,
+  chale: 500
+};
+const VALOR_PACOTE_PADRAO_OUTROS = 300; // ex: Tabernáculo / Penha do Côco
+const VALOR_AULA_INDIVIDUAL = 25;
+
+// Sugere o valor do recibo: individual = valor da aula x quantidade de aulas;
+// pacote = valor fechado do polo (com fallback pro valor padrão de outros polos).
+const valorSugeridoRecibo = (item, polo, quantidadeAulas = 1) => {
+  if (item?.tipoPagamento === 'individual') {
+    return VALOR_AULA_INDIVIDUAL * quantidadeAulas;
+  }
+  if (polo && VALOR_PACOTE_POR_POLO[polo.id] != null) {
+    return VALOR_PACOTE_POR_POLO[polo.id];
+  }
+  return VALOR_PACOTE_PADRAO_OUTROS;
+};
+
+const formatarBRL = (valor) => (Number(valor) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
 // --- Horários por polo ---
 const HORARIOS_SAO_LUIZ = [
   { label: '08:00 - 08:40', value: '08:00' }, { label: '08:40 - 09:20', value: '08:40' },
@@ -133,10 +158,15 @@ export default function App() {
 
   const [filtroLocal, setFiltroLocal] = useState('todos');
   const [filtroInstrumento, setFiltroInstrumento] = useState('todos');
+  const [filtroLocalPagamentos, setFiltroLocalPagamentos] = useState('todos');
 
   const [alunoCertificado, setAlunoCertificado] = useState('');
   const [instrumentoCertificado, setInstrumentoCertificado] = useState('Violão');
   const [emitirCertificado, setEmitirCertificado] = useState(false);
+
+  const [itemRecibo, setItemRecibo] = useState(null);
+  const [quantidadeAulasRecibo, setQuantidadeAulasRecibo] = useState(1);
+  const [valorRecibo, setValorRecibo] = useState('');
 
   // --- Assistente de cadastro e agendamento (aluno) ---
   const [poloSelecionado, setPoloSelecionado] = useState('');
@@ -331,7 +361,12 @@ export default function App() {
           slotId: vagaSelecionada,
           uid,
           presenca: false,
-          tipoPagamento: 'pacote',
+          // Mata Fria/Penha do Côco é cobrado por aula individual; os demais polos
+          // (São Luiz, Chalé, Tabernáculo, e qualquer polo novo) começam como pacote —
+          // o admin ajusta exceção por exceção na aba Pagamentos se precisar.
+          tipoPagamento: poloSelecionado === 'matafria' ? 'individual' : 'pacote',
+          formaPagamento: 'pix',
+          dataPagamento: '',
           pago: false,
           criadoEm: new Date().toISOString()
         });
@@ -402,6 +437,66 @@ export default function App() {
     } catch (err) {
       console.error("Erro ao atualizar pagamento:", err);
     }
+  };
+
+  const alterarTipoPagamento = async (id, novoTipo) => {
+    try {
+      await updateDoc(doc(db, 'agendamentos', id), { tipoPagamento: novoTipo });
+    } catch (err) {
+      console.error('Erro ao alterar tipo de pagamento:', err);
+      alert('Erro ao alterar o tipo de pagamento.');
+    }
+  };
+
+  const alterarFormaPagamento = async (id, novaForma) => {
+    try {
+      await updateDoc(doc(db, 'agendamentos', id), { formaPagamento: novaForma });
+    } catch (err) {
+      console.error('Erro ao alterar forma de pagamento:', err);
+      alert('Erro ao alterar a forma de pagamento.');
+    }
+  };
+
+  // Data de pagamento é sempre escolhida por você (nunca preenchida sozinha) — serve
+  // tanto pra marcar quando um pagamento já caiu quanto pra guardar uma data combinada
+  // que ainda vai acontecer.
+  const alterarDataPagamento = async (id, novaData) => {
+    try {
+      await updateDoc(doc(db, 'agendamentos', id), { dataPagamento: novaData });
+    } catch (err) {
+      console.error('Erro ao alterar data de pagamento:', err);
+      alert('Erro ao alterar a data de pagamento.');
+    }
+  };
+
+  // Define de uma vez o tipo de pagamento (pacote/individual) de TODOS os alunos de um
+  // polo — pra depois você só ajustar exceção por exceção (ex: 1 aluno individual no
+  // meio de um polo que é pacote) direto no seletor de cada card.
+  const definirTipoPagamentoPorPolo = async (poloId, tipo) => {
+    const alvos = agendamentos.filter(a => a.local === poloId);
+    if (alvos.length === 0) {
+      alert('Não tem nenhum aluno cadastrado nesse polo ainda.');
+      return;
+    }
+    const nomePolo = LOCALIZACOES.find(l => l.id === poloId)?.nome || poloId;
+    if (!window.confirm(`Marcar os ${alvos.length} aluno(s) do polo "${nomePolo}" como "${tipo === 'individual' ? 'Individual' : 'Pacote'}"? Isso não mexe em quem já está marcado como pago ou pendente, só no tipo de cobrança.`)) return;
+    try {
+      for (const item of alvos) {
+        await updateDoc(doc(db, 'agendamentos', item.id), { tipoPagamento: tipo });
+      }
+    } catch (err) {
+      console.error('Erro ao definir tipo de pagamento em lote:', err);
+      alert('Erro ao aplicar em lote — alguns alunos podem ter ficado sem atualizar.');
+    }
+  };
+
+  // Abre o recibo já com um valor sugerido (editável) — chamado assim que o pagamento
+  // combinado tem uma data definida, direto do card do aluno na aba Pagamentos.
+  const abrirRecibo = (item) => {
+    const polo = LOCALIZACOES.find(l => l.id === item.local);
+    setQuantidadeAulasRecibo(1);
+    setValorRecibo(String(valorSugeridoRecibo(item, polo, 1)));
+    setItemRecibo(item);
   };
 
   // Restaura um backup .json (baixado pelo botão "Baixar Backup") — substitui TODOS os
@@ -587,6 +682,8 @@ export default function App() {
               slotId,
               presenca: false,
               tipoPagamento: 'pacote',
+              formaPagamento: 'pix',
+              dataPagamento: '',
               pago: false,
               criadoEm: new Date().toISOString()
             };
@@ -1419,36 +1516,203 @@ export default function App() {
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                 <DollarSign className="w-6 h-6 text-emerald-600" /> Gerenciador de Pagamentos
               </h2>
-              <p className="text-xs text-slate-500">Controle o status financeiro de mensalidades (pacotes) e aulas avulsas.</p>
+              <p className="text-xs text-slate-500">Controle o tipo de cobrança (pacote/individual), forma de pagamento e status de cada aluno.</p>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Filtrar por Polo</label>
+                <select
+                  value={filtroLocalPagamentos}
+                  onChange={(e) => setFiltroLocalPagamentos(e.target.value)}
+                  className="w-full sm:w-72 px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="todos">Todos os Polos</option>
+                  {LOCALIZACOES.map(l => (
+                    <option key={l.id} value={l.id}>{l.nome}</option>
+                  ))}
+                </select>
+              </div>
+
+              {filtroLocalPagamentos !== 'todos' && (
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200">
+                  <span className="text-xs font-semibold text-slate-600">Marcar todo mundo desse polo como:</span>
+                  <button
+                    onClick={() => definirTipoPagamentoPorPolo(filtroLocalPagamentos, 'pacote')}
+                    className="bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                  >
+                    Pacote
+                  </button>
+                  <button
+                    onClick={() => definirTipoPagamentoPorPolo(filtroLocalPagamentos, 'individual')}
+                    className="bg-amber-100 hover:bg-amber-200 text-amber-800 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                  >
+                    Individual
+                  </button>
+                  <span className="text-xs text-slate-400">(depois é só ajustar exceção por exceção em cada card abaixo)</span>
+                </div>
+              )}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {agendamentos.map((item) => (
-                <div key={item.id} className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col justify-between">
+              {agendamentos
+                .filter(item => filtroLocalPagamentos === 'todos' || item.local === filtroLocalPagamentos)
+                .map((item) => (
+                <div key={item.id} className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col justify-between gap-3">
                   <div>
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="text-xs font-bold uppercase text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
-                        {item.tipoPagamento === 'individual' ? 'Aula Individual' : 'Pacote Mensal'}
-                      </span>
-                    </div>
-                    <h3 className="font-bold text-slate-800 text-base mt-2">{item.nome}</h3>
+                    <h3 className="font-bold text-slate-800 text-base">{item.nome}</h3>
                     <p className="text-xs text-slate-500 mt-0.5 uppercase">{LOCALIZACOES.find(l => l.id === item.local)?.nome} - {item.instrumento}</p>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Tipo</label>
+                      <select
+                        value={item.tipoPagamento || 'pacote'}
+                        onChange={(e) => alterarTipoPagamento(item.id, e.target.value)}
+                        className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                      >
+                        <option value="pacote">Pacote</option>
+                        <option value="individual">Individual</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Forma</label>
+                      <select
+                        value={item.formaPagamento || 'pix'}
+                        onChange={(e) => alterarFormaPagamento(item.id, e.target.value)}
+                        className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                      >
+                        <option value="pix">Pix</option>
+                        <option value="dinheiro">Dinheiro</option>
+                        <option value="outro">Outro</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Data do pagamento</label>
+                    <input
+                      type="date"
+                      value={item.dataPagamento || ''}
+                      onChange={(e) => alterarDataPagamento(item.id, e.target.value)}
+                      className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
                     <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${item.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                       {item.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
                     </span>
-                    <button 
+                    <button
                       onClick={() => alternarPagamento(item.id, item.pago)}
                       className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${item.pago ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}
                     >
                       {item.pago ? 'Marcar Pendente' : 'Marcar como Pago'}
                     </button>
                   </div>
+
+                  {item.dataPagamento && (
+                    <button
+                      onClick={() => abrirRecibo(item)}
+                      className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
+                    >
+                      <Printer className="w-3.5 h-3.5" /> Gerar Recibo
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
+
+            {itemRecibo && (
+              <div className="bg-white border-8 border-double border-emerald-800 p-8 sm:p-12 rounded-2xl shadow-xl max-w-2xl mx-auto text-center relative overflow-hidden print:shadow-none print:border-8">
+                <div className="absolute top-4 right-4 print:hidden flex gap-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
+                  >
+                    <Printer className="w-4 h-4" /> Imprimir / Salvar PDF
+                  </button>
+                  <button
+                    onClick={() => setItemRecibo(null)}
+                    className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition"
+                  >
+                    Fechar
+                  </button>
+                </div>
+
+                <div className="mb-6">
+                  <Music className="w-14 h-14 text-emerald-700 mx-auto mb-2" />
+                  <h1 className="text-xl sm:text-2xl font-serif font-bold text-emerald-900 uppercase tracking-widest">Projeto Acordes de Davi</h1>
+                  <p className="text-xs uppercase tracking-widest text-emerald-600 font-semibold mt-1">A Música Transforma Vidas</p>
+                </div>
+
+                <h2 className="text-3xl font-serif font-bold text-slate-800 tracking-wide mb-6">Recibo de Pagamento</h2>
+
+                <div className="text-left bg-slate-50 rounded-xl p-5 border border-slate-200 space-y-2 text-sm text-slate-700 mb-6">
+                  <p><span className="font-semibold text-slate-800">Aluno(a):</span> {itemRecibo.nome}</p>
+                  <p><span className="font-semibold text-slate-800">Polo:</span> {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}</p>
+                  <p><span className="font-semibold text-slate-800">Instrumento:</span> {itemRecibo.instrumento}</p>
+                  <p>
+                    <span className="font-semibold text-slate-800">Tipo de cobrança:</span>{' '}
+                    {itemRecibo.tipoPagamento === 'individual'
+                      ? `Individual (${quantidadeAulasRecibo} aula${quantidadeAulasRecibo > 1 ? 's' : ''})`
+                      : 'Pacote'}
+                  </p>
+                  <p>
+                    <span className="font-semibold text-slate-800">Forma de pagamento:</span>{' '}
+                    {itemRecibo.formaPagamento === 'pix' ? 'Pix' : itemRecibo.formaPagamento === 'dinheiro' ? 'Dinheiro' : 'Outro'}
+                  </p>
+                  <p>
+                    <span className="font-semibold text-slate-800">Data do pagamento:</span>{' '}
+                    {itemRecibo.dataPagamento ? new Date(itemRecibo.dataPagamento + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
+                  </p>
+                </div>
+
+                {itemRecibo.tipoPagamento === 'individual' && (
+                  <div className="mb-4 print:hidden flex items-center justify-center gap-2">
+                    <label className="text-xs font-semibold text-slate-600 uppercase">Quantidade de aulas</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={quantidadeAulasRecibo}
+                      onChange={(e) => {
+                        const qtd = Math.max(1, Number(e.target.value) || 1);
+                        setQuantidadeAulasRecibo(qtd);
+                        setValorRecibo(String(VALOR_AULA_INDIVIDUAL * qtd));
+                      }}
+                      className="w-20 px-2 py-1.5 border border-slate-300 rounded-lg text-sm text-center"
+                    />
+                  </div>
+                )}
+
+                <div className="mb-6 print:hidden flex items-center justify-center gap-2">
+                  <label className="text-xs font-semibold text-slate-600 uppercase">Valor (editável)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={valorRecibo}
+                    onChange={(e) => setValorRecibo(e.target.value)}
+                    className="w-32 px-2 py-1.5 border border-slate-300 rounded-lg text-sm text-center"
+                  />
+                </div>
+
+                <p className="text-4xl font-bold text-emerald-900 border-t-2 border-b-2 border-emerald-600 py-4 mb-6">
+                  {formatarBRL(valorRecibo)}
+                </p>
+
+                <p className="text-sm text-slate-700 max-w-xl mx-auto leading-relaxed mb-8">
+                  Recebemos de <strong className="text-emerald-900">{itemRecibo.nome}</strong> o valor acima referente ao pagamento das aulas de {itemRecibo.instrumento} no Projeto Acordes de Davi, polo {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}.
+                </p>
+
+                <div className="mt-10 pt-6 border-t border-slate-300 text-xs text-slate-600">
+                  <div className="border-b border-slate-400 w-56 mb-1 mx-auto"></div>
+                  <p className="font-bold text-slate-800">Coordenação do Projeto</p>
+                  <p className="text-slate-500">Recibo emitido em: {new Date().toLocaleDateString('pt-BR')}</p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
