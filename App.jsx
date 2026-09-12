@@ -2100,7 +2100,7 @@ export default function App() {
                             Pacote combinado: {formatarBRL(valorPacote)}
                           </span>
                         </div>
-                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        <div className="space-y-2">
                           {doPolo.map((item) => renderCardPagamento(item))}
                         </div>
                       </div>
