@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 600" width="500" height="600">
+  <defs>
+    <radialGradient id="bg" cx="35%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#0d6b52"/>
+      <stop offset="100%" stop-color="#053b2c"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f6d270"/>
+      <stop offset="100%" stop-color="#d69f2e"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Selo circular -->
+  <circle cx="250" cy="225" r="190" fill="url(#bg)" stroke="url(#gold)" stroke-width="6"/>
+  <circle cx="250" cy="225" r="174" fill="none" stroke="#f6d27055" stroke-width="1.5"/>
+
+  <!-- Harpa estilizada (referência a 1 Samuel 16:23) -->
+  <g>
+    <!-- base -->
+    <rect x="205" y="300" width="90" height="16" rx="6" fill="url(#gold)"/>
+    <!-- braço esquerdo -->
+    <path d="M 222 302 C 150 300, 118 210, 150 128 C 158 108, 178 96, 198 92"
+          fill="none" stroke="url(#gold)" stroke-width="12" stroke-linecap="round"/>
+    <!-- braço direito -->
+    <path d="M 278 302 C 350 300, 382 210, 350 128 C 342 108, 322 96, 302 92"
+          fill="none" stroke="url(#gold)" stroke-width="12" stroke-linecap="round"/>
+    <!-- travessa superior -->
+    <path d="M 198 92 C 225 82, 275 82, 302 92" fill="none" stroke="url(#gold)" stroke-width="10" stroke-linecap="round"/>
+    <!-- cordas -->
+    <line x1="212" y1="120" x2="222" y2="300" stroke="#fdf6e3" stroke-width="2.5" opacity="0.9"/>
+    <line x1="228" y1="106" x2="236" y2="300" stroke="#fdf6e3" stroke-width="2.5" opacity="0.9"/>
+    <line x1="246" y1="98" x2="250" y2="300" stroke="#fdf6e3" stroke-width="2.5" opacity="0.9"/>
+    <line x1="264" y1="98" x2="264" y2="300" stroke="#fdf6e3" stroke-width="2.5" opacity="0.9"/>
+    <line x1="282" y1="106" x2="278" y2="300" stroke="#fdf6e3" stroke-width="2.5" opacity="0.9"/>
+    <line x1="298" y1="120" x2="290" y2="300" stroke="#fdf6e3" stroke-width="2.5" opacity="0.9"/>
+  </g>
+
+  <!-- Nota musical de acento -->
+  <g transform="translate(326,150) rotate(18)">
+    <circle cx="0" cy="20" r="9" fill="url(#gold)"/>
+    <rect x="7" y="-24" width="4" height="44" fill="url(#gold)"/>
+    <path d="M 11 -24 C 26 -18, 30 -4, 11 6" fill="none" stroke="url(#gold)" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <!-- Nome -->
+  <text x="250" y="470" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="42" font-weight="700" fill="#0d6b52" letter-spacing="1.5">
+    ACORDES DE DAVI
+  </text>
+  <text x="250" y="500" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="16" font-weight="600" fill="#b8860b" letter-spacing="3">
+    AULAS DE VIOLÃO E BATERIA
+  </text>
+
+  <!-- Linha decorativa -->
+  <line x1="150" y1="518" x2="350" y2="518" stroke="#d69f2e" stroke-width="1.5"/>
+  <text x="250" y="540" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="13" fill="#4b5563">
+    "...então Saul andava aliviado" — 1 Samuel 16:23
+  </text>
+</svg>
