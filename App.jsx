@@ -175,6 +175,7 @@ export default function App() {
   const [filtroLocal, setFiltroLocal] = useState('todos');
   const [filtroInstrumento, setFiltroInstrumento] = useState('todos');
   const [filtroLocalPagamentos, setFiltroLocalPagamentos] = useState('todos');
+  const [poloPacoteExpandido, setPoloPacoteExpandido] = useState(null);
 
   const [alunoCertificado, setAlunoCertificado] = useState('');
   const [instrumentoCertificado, setInstrumentoCertificado] = useState('Violão');
@@ -2062,9 +2063,12 @@ export default function App() {
             </div>
 
             {(() => {
-              // Alunos em pacote agora mostram o mesmo card completo dos individuais
-              // (tipo, forma, data, valor, status) — só ficam agrupados por polo, com
-              // o valor do pacote combinado daquele polo em destaque no topo do grupo.
+              // Alunos em pacote viram só um card pequeno e resumido por polo — nome do
+              // polo, quantos alunos e o valor do pacote combinado. Sem listar nome de
+              // aluno aqui (o pagamento é combinado uma vez só, na aba Igrejas); quem
+              // precisa ver a lista de nomes é o recibo impresso, não essa tela. O botão
+              // "Ver alunos" só existe pra quando você precisar excepcionalmente mudar
+              // UM aluno de pacote pra individual.
               const pacoteFiltrados = agendamentos.filter(item => (
                 (filtroLocalPagamentos === 'todos' || item.local === filtroLocalPagamentos)
                 && (item.tipoPagamento || 'pacote') !== 'individual'
@@ -2086,23 +2090,35 @@ export default function App() {
                     const valorPacote = igrejaDoPolo?.valorCombinado != null && igrejaDoPolo.valorCombinado !== ''
                       ? igrejaDoPolo.valorCombinado
                       : (VALOR_PACOTE_POR_POLO[polo.id] ?? VALOR_PACOTE_PADRAO_OUTROS);
+                    const expandido = poloPacoteExpandido === polo.id;
 
                     return (
-                      <div key={polo.id} className="bg-slate-50 rounded-xl border border-slate-200 p-4">
-                        <div className="flex items-center justify-between flex-wrap gap-2 mb-2 pb-2 border-b border-slate-200">
+                      <div key={polo.id} className="bg-slate-50 rounded-xl border border-slate-200 p-3">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
                           <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
                             <MapPin className="w-4 h-4 text-emerald-600" /> {polo.nome}
                             <span className="text-xs font-medium text-slate-400 normal-case">
                               ({doPolo.length} {doPolo.length === 1 ? 'aluno' : 'alunos'})
                             </span>
                           </h4>
-                          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full whitespace-nowrap">
-                            Pacote combinado: {formatarBRL(valorPacote)}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full whitespace-nowrap">
+                              Pacote combinado: {formatarBRL(valorPacote)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setPoloPacoteExpandido(expandido ? null : polo.id)}
+                              className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap"
+                            >
+                              {expandido ? 'Ocultar alunos' : 'Ver alunos'}
+                            </button>
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          {doPolo.map((item) => renderCardPagamento(item))}
-                        </div>
+                        {expandido && (
+                          <div className="space-y-2 mt-3 pt-3 border-t border-slate-200">
+                            {doPolo.map((item) => renderCardPagamento(item))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -2224,6 +2240,21 @@ export default function App() {
                     {itemRecibo.instrumento ? `das aulas de ${itemRecibo.instrumento}` : 'do pacote de aulas'} no Projeto Acordes de Davi, polo{' '}
                     {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}.
                   </p>
+
+                  {itemRecibo.origem === 'igreja' && (
+                    <div className="text-left max-w-xl mx-auto mb-8">
+                      <p className="text-xs font-semibold text-slate-800 uppercase tracking-wide mb-2 border-b border-slate-200 pb-1">
+                        Alunos atendidos por esse pacote
+                      </p>
+                      <ul className="text-sm text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5 list-disc list-inside">
+                        {agendamentos.filter(a => a.local === itemRecibo.local).map((a) => (
+                          <li key={a.id}>
+                            {a.nome} <span className="text-xs text-slate-500 capitalize">— {a.instrumento}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
 
                   <div className="mt-10 pt-6 border-t border-slate-300 text-xs text-slate-600">
                     <div className="border-b border-slate-400 w-56 mb-1 mx-auto"></div>
