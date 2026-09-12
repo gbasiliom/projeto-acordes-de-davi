@@ -1943,7 +1943,7 @@ export default function App() {
                   src="/logo-acordes-de-davi.svg"
                   alt=""
                   aria-hidden="true"
-                  className="absolute inset-0 m-auto w-2/3 max-w-xs opacity-[0.06] pointer-events-none select-none"
+                  className="absolute inset-0 m-auto w-2/3 max-w-xs opacity-[0.16] pointer-events-none select-none"
                 />
 
                 <div className="relative z-10">
@@ -1969,26 +1969,6 @@ export default function App() {
                   </div>
 
                   <h2 className="text-3xl font-serif font-bold text-slate-800 tracking-wide mb-6">Recibo de Pagamento</h2>
-
-                  <div className="text-left bg-slate-50 rounded-xl p-5 border border-slate-200 space-y-2 text-sm text-slate-700 mb-6">
-                    <p><span className="font-semibold text-slate-800">Aluno(a):</span> {itemRecibo.nome}</p>
-                    <p><span className="font-semibold text-slate-800">Polo:</span> {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}</p>
-                    <p><span className="font-semibold text-slate-800">Instrumento:</span> {itemRecibo.instrumento}</p>
-                    <p>
-                      <span className="font-semibold text-slate-800">Tipo de cobrança:</span>{' '}
-                      {itemRecibo.tipoPagamento === 'individual'
-                        ? `Individual (${quantidadeAulasRecibo} aula${quantidadeAulasRecibo > 1 ? 's' : ''})`
-                        : 'Pacote'}
-                    </p>
-                    <p>
-                      <span className="font-semibold text-slate-800">Forma de pagamento:</span>{' '}
-                      {itemRecibo.formaPagamento === 'pix' ? 'Pix' : itemRecibo.formaPagamento === 'dinheiro' ? 'Dinheiro' : 'Outro'}
-                    </p>
-                    <p>
-                      <span className="font-semibold text-slate-800">Data do pagamento:</span>{' '}
-                      {itemRecibo.dataPagamento ? new Date(itemRecibo.dataPagamento + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
-                    </p>
-                  </div>
 
                   {itemRecibo.tipoPagamento === 'individual' && (
                     <div className="mb-4 print:hidden flex items-center justify-center gap-2">
@@ -2024,7 +2004,18 @@ export default function App() {
                   </p>
 
                   <p className="text-sm text-slate-700 max-w-xl mx-auto leading-relaxed mb-8">
-                    Recebemos de <strong className="text-emerald-900">{itemRecibo.nome}</strong> o valor acima referente ao pagamento das aulas de {itemRecibo.instrumento} no Projeto Acordes de Davi, polo {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}.
+                    Recebemos de <strong className="text-emerald-900">{itemRecibo.nome}</strong> o valor acima referente ao pagamento{' '}
+                    {itemRecibo.tipoPagamento === 'individual'
+                      ? `de ${quantidadeAulasRecibo} aula${quantidadeAulasRecibo > 1 ? 's' : ''}`
+                      : 'do pacote'}{' '}
+                    de {itemRecibo.instrumento} no Projeto Acordes de Davi, polo{' '}
+                    <strong className="text-emerald-900">{LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}</strong>,
+                    pago via <strong className="text-emerald-900">
+                      {itemRecibo.formaPagamento === 'pix' ? 'Pix' : itemRecibo.formaPagamento === 'dinheiro' ? 'dinheiro' : 'outro meio'}
+                    </strong> em{' '}
+                    <strong className="text-emerald-900">
+                      {itemRecibo.dataPagamento ? new Date(itemRecibo.dataPagamento + 'T00:00:00').toLocaleDateString('pt-BR') : 'data não informada'}
+                    </strong>.
                   </p>
 
                   <div className="mt-10 pt-6 border-t border-slate-300 text-xs text-slate-600">
@@ -2098,7 +2089,7 @@ export default function App() {
                   src="/logo-acordes-de-davi.svg"
                   alt=""
                   aria-hidden="true"
-                  className="absolute inset-0 m-auto w-1/2 max-w-sm opacity-[0.06] pointer-events-none select-none"
+                  className="absolute inset-0 m-auto w-1/2 max-w-sm opacity-[0.16] pointer-events-none select-none"
                 />
 
                 <div className="relative z-10">
