@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download } from 'lucide-react';
+import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
@@ -158,6 +158,12 @@ export default function App() {
   const [salvandoIgreja, setSalvandoIgreja] = useState(false);
   const [editandoIgreja, setEditandoIgreja] = useState(null);
 
+  // --- Acesso da igreja ao Portal da Igreja (criado pelo admin, aba Igrejas) ---
+  const [acessoIgrejaAberto, setAcessoIgrejaAberto] = useState(null);
+  const [formAcessoIgreja, setFormAcessoIgreja] = useState({ email: '', senha: '' });
+  const [erroAcessoIgreja, setErroAcessoIgreja] = useState('');
+  const [salvandoAcessoIgreja, setSalvandoAcessoIgreja] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [abaAtiva, setAbaAtiva] = useState('painel');
   const [usuario, setUsuario] = useState(null);
@@ -204,11 +210,20 @@ export default function App() {
   const [senhaAluno, setSenhaAluno] = useState('');
   const [erroLoginAluno, setErroLoginAluno] = useState('');
 
+  // --- Portal da Igreja (login da igreja mantenedora) ---
+  const [emailIgreja, setEmailIgreja] = useState('');
+  const [senhaIgreja, setSenhaIgreja] = useState('');
+  const [erroLoginIgreja, setErroLoginIgreja] = useState('');
+
   const [mensagemSucesso, setMensagemSucesso] = useState('');
   const [mensagemImportacao, setMensagemImportacao] = useState('');
 
   const souAdmin = !!(usuario && !usuario.isAnonymous && usuario.email === ADMIN_EMAIL);
-  const souAluno = !!(usuario && !usuario.isAnonymous && usuario.email !== ADMIN_EMAIL);
+  // Uma conta é "igreja" quando o uid dela está gravado em algum documento de "igrejas"
+  // (feito pela função serverless que cria o acesso) — precisa ser checado antes de
+  // "aluno", porque senão a conta da igreja cairia no Portal do Aluno por engano.
+  const souIgreja = !!(usuario && !usuario.isAnonymous && !souAdmin && igrejasCadastradas.some(i => i.uid === usuario.uid));
+  const souAluno = !!(usuario && !usuario.isAnonymous && usuario.email !== ADMIN_EMAIL && !souIgreja);
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
@@ -314,6 +329,20 @@ export default function App() {
     } catch (err) {
       console.error("Erro ao fazer login do aluno:", err);
       setErroLoginAluno('E-mail ou senha inválidos. Se ainda não tem cadastro, use "Novo Cadastro".');
+    }
+  };
+
+  const fazerLoginIgreja = async (e) => {
+    e.preventDefault();
+    setErroLoginIgreja('');
+    try {
+      await signInWithEmailAndPassword(auth, emailIgreja, senhaIgreja);
+      setAbaAtiva('portalIgreja');
+      setEmailIgreja('');
+      setSenhaIgreja('');
+    } catch (err) {
+      console.error("Erro ao fazer login da igreja:", err);
+      setErroLoginIgreja('E-mail ou senha inválidos. O acesso da igreja é criado pela coordenação, na aba Igrejas.');
     }
   };
 
@@ -1205,9 +1234,55 @@ export default function App() {
     }
   };
 
-  // Gera o Pix da igreja — chamado pelo ADMIN (não pelo aluno), pra cobrar o mantenedor
-  // do polo de uma vez só. Usa a mesma função serverless /api/mercadopago/criar-pix,
-  // mandando igrejaId em vez de agendamentoId, pra distinguir os dois casos no back-end.
+  // Cria (ou redefine a senha de) o login do Portal da Igreja — feito por você, aqui na
+  // aba Igrejas. Passa por uma função serverless (não mexe direto no Firebase Auth
+  // daqui do navegador) porque criar uma conta pelo front-end loga automaticamente COMO
+  // essa conta nova — isso derrubaria a SUA sessão de admin no meio do cadastro. Feito
+  // no back-end, sua sessão continua intacta e a igreja recebe um e-mail/senha próprios.
+  //
+  // Sempre que você mudar o polo de uma igreja que já tem acesso criado, clique em
+  // "Redefinir senha" de novo (mesmo sem trocar a senha) — é isso que atualiza, por
+  // baixo dos panos, qual polo essa conta pode enxergar.
+  const criarOuRedefinirAcessoIgreja = async (igreja, e) => {
+    e.preventDefault();
+    setErroAcessoIgreja('');
+    const email = formAcessoIgreja.email.trim();
+    const senha = formAcessoIgreja.senha;
+    if (!email || !senha) {
+      setErroAcessoIgreja('Preencha e-mail e senha pra criar o acesso.');
+      return;
+    }
+    if (senha.length < 6) {
+      setErroAcessoIgreja('A senha precisa ter pelo menos 6 caracteres.');
+      return;
+    }
+    setSalvandoAcessoIgreja(true);
+    try {
+      const idToken = await usuario.getIdToken();
+      const resposta = await fetch('/api/igrejas/criar-acesso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ igrejaId: igreja.id, email, senha })
+      });
+      const dados = await resposta.json();
+      if (!resposta.ok) {
+        throw new Error(dados?.erro || 'Não foi possível criar o acesso agora.');
+      }
+      setAcessoIgrejaAberto(null);
+      setFormAcessoIgreja({ email: '', senha: '' });
+      setMensagemSucesso(`Acesso da igreja "${igreja.nome}" salvo! Repasse o e-mail e a senha pra ela entrar no "Portal da Igreja".`);
+      setTimeout(() => setMensagemSucesso(''), 8000);
+    } catch (err) {
+      console.error('Erro ao criar acesso da igreja:', err);
+      setErroAcessoIgreja(err.message || 'Erro ao criar o acesso. Tente novamente.');
+    } finally {
+      setSalvandoAcessoIgreja(false);
+    }
+  };
+
+  // Gera o Pix da igreja — chamado pelo admin OU pela própria igreja logada no Portal da
+  // Igreja. Usa a mesma função serverless /api/mercadopago/criar-pix, mandando igrejaId
+  // em vez de agendamentoId, pra distinguir os dois casos no back-end.
   const gerarPixIgreja = async (igreja) => {
     setErroPixIgreja('');
     setDadosPixIgreja(null);
@@ -1328,6 +1403,12 @@ export default function App() {
   // que "agendamentos" só traz os dele quando não é admin, mas filtramos de novo por clareza)
   const meusAgendamentos = usuario ? agendamentos.filter(item => item.uid === usuario.uid) : [];
 
+  // Igreja logada no Portal da Igreja e os alunos do polo que ela mantém — as regras do
+  // Firestore já garantem que "agendamentos" só traz os alunos daquele polo pra essa
+  // conta (nunca os alunos de outro polo), igual já acontece pro aluno individual.
+  const minhaIgreja = usuario ? igrejasCadastradas.find(i => i.uid === usuario.uid) : null;
+  const meusAlunosIgreja = minhaIgreja ? agendamentos.filter(item => item.local === minhaIgreja.poloId) : [];
+
   // Assim que o webhook do Mercado Pago confirmar o pagamento (marcando "pago" no
   // Firestore), o onSnapshot dos agendamentos já traz isso em tempo real — então só
   // fecha sozinho a tela do QR Code do Pix quando detectar que aquele agendamento virou
@@ -1428,13 +1509,30 @@ export default function App() {
               </button>
             )}
 
-            {!souAluno && !souAdmin && (
+            {souIgreja && (
               <button
-                onClick={() => setAbaAtiva('loginAluno')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'loginAluno' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                onClick={() => setAbaAtiva('portalIgreja')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'portalIgreja' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
               >
-                <LogIn className="w-4 h-4" /> Portal do Aluno
+                <BookOpen className="w-4 h-4" /> Portal da Igreja
               </button>
+            )}
+
+            {!souAluno && !souAdmin && !souIgreja && (
+              <>
+                <button
+                  onClick={() => setAbaAtiva('loginAluno')}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'loginAluno' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                >
+                  <LogIn className="w-4 h-4" /> Portal do Aluno
+                </button>
+                <button
+                  onClick={() => setAbaAtiva('loginIgreja')}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'loginIgreja' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                >
+                  <LogIn className="w-4 h-4" /> Portal da Igreja
+                </button>
+              </>
             )}
 
             {usuario && !usuario.isAnonymous ? (
@@ -2723,6 +2821,91 @@ export default function App() {
                             <Printer className="w-3.5 h-3.5" /> Gerar Recibo (em nome da igreja)
                           </button>
                         )}
+
+                        <div className="mt-3 pt-3 border-t border-slate-200">
+                          {igreja.email ? (
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <p className="text-[11px] text-slate-500">
+                                <KeyRound className="w-3.5 h-3.5 inline -mt-0.5 mr-1 text-emerald-600" />
+                                Acesso liberado: <span className="font-semibold text-slate-700">{igreja.email}</span>
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAcessoIgrejaAberto(igreja.id);
+                                  setFormAcessoIgreja({ email: igreja.email, senha: '' });
+                                  setErroAcessoIgreja('');
+                                }}
+                                className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap"
+                              >
+                                Redefinir senha / polo
+                              </button>
+                            </div>
+                          ) : (
+                            acessoIgrejaAberto !== igreja.id && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAcessoIgrejaAberto(igreja.id);
+                                  setFormAcessoIgreja({ email: '', senha: '' });
+                                  setErroAcessoIgreja('');
+                                }}
+                                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5"
+                              >
+                                <KeyRound className="w-3.5 h-3.5" /> Criar acesso da igreja (Portal da Igreja)
+                              </button>
+                            )
+                          )}
+
+                          {acessoIgrejaAberto === igreja.id && (
+                            <form
+                              onSubmit={(e) => criarOuRedefinirAcessoIgreja(igreja, e)}
+                              className="mt-2 space-y-2 bg-slate-50 p-3 rounded-lg border border-slate-200"
+                            >
+                              {erroAcessoIgreja && (
+                                <div className="bg-red-50 border border-red-200 text-red-700 p-2 rounded-lg text-[11px] flex items-center gap-1.5">
+                                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                  <span>{erroAcessoIgreja}</span>
+                                </div>
+                              )}
+                              <input
+                                type="email"
+                                required
+                                placeholder="E-mail de acesso da igreja"
+                                value={formAcessoIgreja.email}
+                                onChange={(e) => setFormAcessoIgreja({ ...formAcessoIgreja, email: e.target.value })}
+                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500"
+                              />
+                              <input
+                                type="text"
+                                required
+                                placeholder="Senha (mínimo 6 caracteres)"
+                                value={formAcessoIgreja.senha}
+                                onChange={(e) => setFormAcessoIgreja({ ...formAcessoIgreja, senha: e.target.value })}
+                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500"
+                              />
+                              <p className="text-[10px] text-slate-400">
+                                Anote essa senha antes de salvar — depois de salva, só dá pra ver de novo redefinindo.
+                              </p>
+                              <div className="flex gap-2">
+                                <button
+                                  type="submit"
+                                  disabled={salvandoAcessoIgreja}
+                                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                >
+                                  {salvandoAcessoIgreja ? 'Salvando...' : 'Salvar acesso'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setAcessoIgrejaAberto(null); setErroAcessoIgreja(''); }}
+                                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            </form>
+                          )}
+                        </div>
                       </>
                     )}
                   </div>
@@ -2977,6 +3160,56 @@ export default function App() {
           </div>
         )}
 
+        {abaAtiva === 'loginIgreja' && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 max-w-sm mx-auto">
+            <h2 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
+              <LogIn className="w-5 h-5 text-emerald-600" /> Portal da Igreja
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">Entre com o e-mail e a senha que a coordenação criou pra sua igreja.</p>
+
+            {erroLoginIgreja && (
+              <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{erroLoginIgreja}</span>
+              </div>
+            )}
+
+            <form onSubmit={fazerLoginIgreja} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">E-mail</label>
+                <input
+                  type="email"
+                  required
+                  value={emailIgreja}
+                  onChange={(e) => setEmailIgreja(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Senha</label>
+                <input
+                  type="password"
+                  required
+                  value={senhaIgreja}
+                  onChange={(e) => setSenhaIgreja(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full bg-emerald-600 text-white font-medium py-2 rounded-lg text-sm hover:bg-emerald-700 transition shadow-sm"
+                >
+                  Acessar Portal da Igreja
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-400 text-center">
+                Ainda não tem acesso? Fale com a coordenação do Acordes de Davi.
+              </p>
+            </form>
+          </div>
+        )}
+
         {abaAtiva === 'portal' && (
           souAluno ? (
             <div className="max-w-5xl mx-auto space-y-6">
@@ -3109,6 +3342,174 @@ export default function App() {
               <p className="text-slate-500 font-medium">Faça login pra ver seu portal.</p>
               <button
                 onClick={() => setAbaAtiva('loginAluno')}
+                className="mt-4 inline-flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition"
+              >
+                Entrar
+              </button>
+            </div>
+          )
+        )}
+
+        {abaAtiva === 'portalIgreja' && (
+          souIgreja ? (
+            minhaIgreja ? (
+              <div className="max-w-5xl mx-auto space-y-6">
+                <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-emerald-500 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-800">Olá, {minhaIgreja.nome}!</h2>
+                    <p className="text-sm text-slate-500 mt-1">
+                      Polo: {LOCALIZACOES.find(l => l.id === minhaIgreja.poloId)?.nome || 'Polo não encontrado'}
+                      {minhaIgreja.responsavel ? ` · ${minhaIgreja.responsavel}` : ''}
+                    </p>
+                  </div>
+                  <button
+                    onClick={fazerLogout}
+                    className="px-4 py-2 text-sm font-bold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition w-full sm:w-auto"
+                  >
+                    Sair da Conta
+                  </button>
+                </div>
+
+                <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
+                  <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <DollarSign className="w-5 h-5 text-emerald-600" /> Pagamento do Pacote
+                  </h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-500 uppercase">Valor combinado</p>
+                      <p className="text-sm font-bold text-slate-800">{minhaIgreja.valorCombinado ? formatarBRL(minhaIgreja.valorCombinado) : 'A combinar'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-500 uppercase">Forma</p>
+                      <p className="text-sm font-bold text-slate-800 capitalize">{minhaIgreja.formaPagamento || 'Pix'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-500 uppercase">Data do pagamento</p>
+                      <p className="text-sm font-bold text-slate-800">{minhaIgreja.dataPagamento ? new Date(minhaIgreja.dataPagamento + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-500 uppercase">Status</p>
+                      <span className={`inline-block mt-0.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${minhaIgreja.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                        {minhaIgreja.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {!minhaIgreja.pago && (
+                    minhaIgreja.valorCombinado ? (
+                      <button
+                        onClick={() => gerarPixIgreja(minhaIgreja)}
+                        disabled={gerandoPixIgreja}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
+                      >
+                        <DollarSign className="w-3.5 h-3.5" />
+                        {gerandoPixIgreja ? 'Gerando Pix...' : `Pagar ${formatarBRL(minhaIgreja.valorCombinado)} com Pix`}
+                      </button>
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">Aguardando a coordenação combinar o valor do pacote.</p>
+                    )
+                  )}
+
+                  {erroPixIgreja && (
+                    <div className="mt-3 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>{erroPixIgreja}</span>
+                    </div>
+                  )}
+
+                  {dadosPixIgreja && (
+                    <div className="mt-4 bg-white border-4 border-double border-emerald-700 rounded-2xl p-6 text-center shadow-xl max-w-sm mx-auto">
+                      <h3 className="text-base font-bold text-emerald-900 mb-1">Pagamento via Pix</h3>
+                      <p className="text-xs text-slate-500 mb-4">Escaneie o QR Code ou copie o código no app do banco.</p>
+                      {dadosPixIgreja.qrCodeBase64 && (
+                        <img
+                          src={`data:image/png;base64,${dadosPixIgreja.qrCodeBase64}`}
+                          alt="QR Code Pix"
+                          className="mx-auto mb-4 w-48 h-48 rounded-lg border border-slate-200"
+                        />
+                      )}
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(dadosPixIgreja.qrCode || '');
+                          setMensagemSucesso('Código Pix copiado!');
+                          setTimeout(() => setMensagemSucesso(''), 3000);
+                        }}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition mb-2"
+                      >
+                        Copiar código Pix
+                      </button>
+                      <button
+                        onClick={() => { setDadosPixIgreja(null); setIgrejaComPixAberto(null); }}
+                        className="w-full text-xs text-slate-500 hover:text-slate-700 transition"
+                      >
+                        Cancelar
+                      </button>
+                      <p className="text-[11px] text-slate-400 mt-4">
+                        A confirmação é automática — assim que o pagamento cair, essa tela atualiza sozinha.
+                      </p>
+                    </div>
+                  )}
+
+                  {minhaIgreja.dataPagamento && (
+                    <button
+                      onClick={() => abrirReciboIgreja(minhaIgreja)}
+                      className="mt-3 w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
+                    >
+                      <Printer className="w-3.5 h-3.5" /> Gerar Recibo (em nome da igreja)
+                    </button>
+                  )}
+                </div>
+
+                <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
+                  <h3 className="text-lg font-bold text-slate-800 mb-1 flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <Users className="w-5 h-5 text-emerald-600" /> Alunos do seu polo
+                  </h3>
+                  <p className="text-xs text-slate-500 mb-4">
+                    {meusAlunosIgreja.length} aluno(s) — frequência conforme a última chamada marcada pela coordenação.
+                  </p>
+                  {meusAlunosIgreja.length === 0 ? (
+                    <p className="text-sm text-slate-400 text-center py-6">Nenhum aluno registrado nesse polo ainda.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
+                            <th className="p-3">Aluno</th>
+                            <th className="p-3">Instrumento</th>
+                            <th className="p-3 text-center">Frequência</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-sm">
+                          {meusAlunosIgreja.map((item) => (
+                            <tr key={item.id}>
+                              <td className="p-3 font-bold text-slate-800">{item.nome}</td>
+                              <td className="p-3 text-xs text-slate-600 capitalize">{item.instrumento}</td>
+                              <td className="p-3 text-center">
+                                <span className={`px-3 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 ${item.presenca ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                  {item.presenca ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                                  {item.presenca ? 'PRESENTE' : 'FALTOU / A MARCAR'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300 p-6 max-w-md mx-auto">
+                <AlertTriangle className="w-12 h-12 text-amber-400 mx-auto mb-2" />
+                <p className="text-slate-500 font-medium">Não encontrei o cadastro da sua igreja. Fale com a coordenação.</p>
+              </div>
+            )
+          ) : (
+            <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300 p-6 max-w-md mx-auto">
+              <BookOpen className="w-12 h-12 text-slate-300 mx-auto mb-2" />
+              <p className="text-slate-500 font-medium">Faça login pra ver o portal da sua igreja.</p>
+              <button
+                onClick={() => setAbaAtiva('loginIgreja')}
                 className="mt-4 inline-flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition"
               >
                 Entrar
