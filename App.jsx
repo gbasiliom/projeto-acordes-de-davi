@@ -175,7 +175,6 @@ export default function App() {
   const [filtroLocal, setFiltroLocal] = useState('todos');
   const [filtroInstrumento, setFiltroInstrumento] = useState('todos');
   const [filtroLocalPagamentos, setFiltroLocalPagamentos] = useState('todos');
-  const [poloPacoteExpandido, setPoloPacoteExpandido] = useState(null);
 
   const [alunoCertificado, setAlunoCertificado] = useState('');
   const [instrumentoCertificado, setInstrumentoCertificado] = useState('Violão');
@@ -2063,12 +2062,11 @@ export default function App() {
             </div>
 
             {(() => {
-              // Alunos em pacote viram só um card pequeno e resumido por polo — nome do
-              // polo, quantos alunos e o valor do pacote combinado. Sem listar nome de
-              // aluno aqui (o pagamento é combinado uma vez só, na aba Igrejas); quem
-              // precisa ver a lista de nomes é o recibo impresso, não essa tela. O botão
-              // "Ver alunos" só existe pra quando você precisar excepcionalmente mudar
-              // UM aluno de pacote pra individual.
+              // Card único por polo/igreja: lista os nomes dos alunos daquele pacote
+              // (só nome + instrumento, sem os campos de cada um — pagamento em pacote é
+              // combinado uma vez só pra igreja inteira) e, logo abaixo, os mesmos campos
+              // de forma/data/valor/status que já existem na aba Igrejas — editar aqui
+              // reflete lá e vice-versa, é o mesmo registro.
               const pacoteFiltrados = agendamentos.filter(item => (
                 (filtroLocalPagamentos === 'todos' || item.local === filtroLocalPagamentos)
                 && (item.tipoPagamento || 'pacote') !== 'individual'
@@ -2090,34 +2088,102 @@ export default function App() {
                     const valorPacote = igrejaDoPolo?.valorCombinado != null && igrejaDoPolo.valorCombinado !== ''
                       ? igrejaDoPolo.valorCombinado
                       : (VALOR_PACOTE_POR_POLO[polo.id] ?? VALOR_PACOTE_PADRAO_OUTROS);
-                    const expandido = poloPacoteExpandido === polo.id;
 
                     return (
-                      <div key={polo.id} className="bg-slate-50 rounded-xl border border-slate-200 p-3">
-                        <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div key={polo.id} className="bg-slate-50 rounded-xl border border-slate-200 p-4">
+                        <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
                           <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
                             <MapPin className="w-4 h-4 text-emerald-600" /> {polo.nome}
-                            <span className="text-xs font-medium text-slate-400 normal-case">
-                              ({doPolo.length} {doPolo.length === 1 ? 'aluno' : 'alunos'})
-                            </span>
                           </h4>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full whitespace-nowrap">
-                              Pacote combinado: {formatarBRL(valorPacote)}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setPoloPacoteExpandido(expandido ? null : polo.id)}
-                              className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap"
-                            >
-                              {expandido ? 'Ocultar alunos' : 'Ver alunos'}
-                            </button>
-                          </div>
+                          <span className="text-xs font-medium text-slate-400 whitespace-nowrap">
+                            {doPolo.length} {doPolo.length === 1 ? 'aluno' : 'alunos'}
+                          </span>
                         </div>
-                        {expandido && (
-                          <div className="space-y-2 mt-3 pt-3 border-t border-slate-200">
-                            {doPolo.map((item) => renderCardPagamento(item))}
+                        {igrejaDoPolo?.nome && (
+                          <p className="text-xs text-slate-500 mb-3">Igreja mantenedora: {igrejaDoPolo.nome}</p>
+                        )}
+
+                        <ul className="space-y-1 mb-3">
+                          {doPolo.map((item) => (
+                            <li
+                              key={item.id}
+                              className="flex items-center justify-between gap-2 text-sm text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-1.5"
+                            >
+                              <span className="truncate">{item.nome}</span>
+                              <span className="text-xs text-slate-400 capitalize shrink-0">{item.instrumento}</span>
+                            </li>
+                          ))}
+                        </ul>
+
+                        {igrejaDoPolo ? (
+                          <div className="pt-3 border-t border-slate-200">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              <div>
+                                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Forma</label>
+                                <select
+                                  value={igrejaDoPolo.formaPagamento || 'pix'}
+                                  onChange={(e) => alterarFormaPagamentoIgreja(igrejaDoPolo.id, e.target.value)}
+                                  className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                                >
+                                  <option value="pix">Pix</option>
+                                  <option value="dinheiro">Dinheiro</option>
+                                  <option value="outro">Outro</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Data do pagamento</label>
+                                <input
+                                  type="date"
+                                  value={igrejaDoPolo.dataPagamento || ''}
+                                  onChange={(e) => alterarDataPagamentoIgreja(igrejaDoPolo.id, e.target.value)}
+                                  className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                                />
+                              </div>
+                              <div className="col-span-2 sm:col-span-1">
+                                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Valor combinado (R$)</label>
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={igrejaDoPolo.valorCombinado ?? ''}
+                                    onChange={(e) => alterarValorCombinadoIgreja(igrejaDoPolo.id, e.target.value)}
+                                    placeholder="0,00"
+                                    className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => alterarValorCombinadoIgreja(igrejaDoPolo.id, String(VALOR_PACOTE_POR_POLO[polo.id] ?? VALOR_PACOTE_PADRAO_OUTROS))}
+                                    className="shrink-0 text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap"
+                                  >
+                                    sugestão
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="flex flex-col items-start gap-1">
+                                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Status</label>
+                                <button
+                                  onClick={() => alternarPagamentoIgreja(igrejaDoPolo.id, igrejaDoPolo.pago)}
+                                  className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition ${igrejaDoPolo.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
+                                >
+                                  {igrejaDoPolo.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
+                                </button>
+                              </div>
+                            </div>
+
+                            {igrejaDoPolo.dataPagamento && (
+                              <button
+                                onClick={() => abrirReciboIgreja(igrejaDoPolo)}
+                                className="mt-3 w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
+                              >
+                                <Printer className="w-3.5 h-3.5" /> Gerar Recibo (em nome da igreja)
+                              </button>
+                            )}
                           </div>
+                        ) : (
+                          <p className="text-[11px] text-slate-400 italic pt-3 border-t border-slate-200">
+                            Cadastre a igreja mantenedora desse polo na aba Igrejas (valor sugerido: {formatarBRL(valorPacote)}) pra liberar forma, data, valor e recibo do pacote aqui.
+                          </p>
                         )}
                       </div>
                     );
