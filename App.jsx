@@ -1337,7 +1337,7 @@ export default function App() {
       <header className="bg-emerald-800 text-white shadow-md print:hidden">
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-2">
           <div className="flex items-center gap-3">
-            <Music className="w-8 h-8 text-emerald-300" />
+            <img src="/logo-acordes-de-davi.svg" alt="Logo Acordes de Davi" className="w-12 h-12 shrink-0 print:hidden" />
             <div>
               <h1 className="text-xl font-bold">Projeto Acordes de Davi</h1>
               <p className="text-xs text-emerald-200">Gestão, Frequência, Pagamentos e Certificados</p>
@@ -1938,90 +1938,100 @@ export default function App() {
 
             {itemRecibo && (
               <div className="bg-white border-8 border-double border-emerald-800 p-8 sm:p-12 rounded-2xl shadow-xl max-w-2xl mx-auto text-center relative overflow-hidden print:shadow-none print:border-8">
-                <div className="absolute top-4 right-4 print:hidden flex gap-2">
-                  <button
-                    onClick={() => window.print()}
-                    className="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
-                  >
-                    <Printer className="w-4 h-4" /> Imprimir / Salvar PDF
-                  </button>
-                  <button
-                    onClick={() => setItemRecibo(null)}
-                    className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition"
-                  >
-                    Fechar
-                  </button>
-                </div>
+                {/* Marca d'água — logo bem clarinha atrás do conteúdo, some das telas de edição, mas fica na impressão/PDF */}
+                <img
+                  src="/logo-acordes-de-davi.svg"
+                  alt=""
+                  aria-hidden="true"
+                  className="absolute inset-0 m-auto w-2/3 max-w-xs opacity-[0.06] pointer-events-none select-none"
+                />
 
-                <div className="mb-6">
-                  <Music className="w-14 h-14 text-emerald-700 mx-auto mb-2" />
-                  <h1 className="text-xl sm:text-2xl font-serif font-bold text-emerald-900 uppercase tracking-widest">Projeto Acordes de Davi</h1>
-                  <p className="text-xs uppercase tracking-widest text-emerald-600 font-semibold mt-1">A Música Transforma Vidas</p>
-                </div>
+                <div className="relative z-10">
+                  <div className="absolute top-4 right-4 print:hidden flex gap-2">
+                    <button
+                      onClick={() => window.print()}
+                      className="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
+                    >
+                      <Printer className="w-4 h-4" /> Imprimir / Salvar PDF
+                    </button>
+                    <button
+                      onClick={() => setItemRecibo(null)}
+                      className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition"
+                    >
+                      Fechar
+                    </button>
+                  </div>
 
-                <h2 className="text-3xl font-serif font-bold text-slate-800 tracking-wide mb-6">Recibo de Pagamento</h2>
+                  <div className="mb-6">
+                    <img src="/logo-acordes-de-davi.svg" alt="Logo Acordes de Davi" className="w-14 h-14 mx-auto mb-2" />
+                    <h1 className="text-xl sm:text-2xl font-serif font-bold text-emerald-900 uppercase tracking-widest">Projeto Acordes de Davi</h1>
+                    <p className="text-xs uppercase tracking-widest text-emerald-600 font-semibold mt-1">A Música Transforma Vidas</p>
+                  </div>
 
-                <div className="text-left bg-slate-50 rounded-xl p-5 border border-slate-200 space-y-2 text-sm text-slate-700 mb-6">
-                  <p><span className="font-semibold text-slate-800">Aluno(a):</span> {itemRecibo.nome}</p>
-                  <p><span className="font-semibold text-slate-800">Polo:</span> {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}</p>
-                  <p><span className="font-semibold text-slate-800">Instrumento:</span> {itemRecibo.instrumento}</p>
-                  <p>
-                    <span className="font-semibold text-slate-800">Tipo de cobrança:</span>{' '}
-                    {itemRecibo.tipoPagamento === 'individual'
-                      ? `Individual (${quantidadeAulasRecibo} aula${quantidadeAulasRecibo > 1 ? 's' : ''})`
-                      : 'Pacote'}
-                  </p>
-                  <p>
-                    <span className="font-semibold text-slate-800">Forma de pagamento:</span>{' '}
-                    {itemRecibo.formaPagamento === 'pix' ? 'Pix' : itemRecibo.formaPagamento === 'dinheiro' ? 'Dinheiro' : 'Outro'}
-                  </p>
-                  <p>
-                    <span className="font-semibold text-slate-800">Data do pagamento:</span>{' '}
-                    {itemRecibo.dataPagamento ? new Date(itemRecibo.dataPagamento + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
-                  </p>
-                </div>
+                  <h2 className="text-3xl font-serif font-bold text-slate-800 tracking-wide mb-6">Recibo de Pagamento</h2>
 
-                {itemRecibo.tipoPagamento === 'individual' && (
-                  <div className="mb-4 print:hidden flex items-center justify-center gap-2">
-                    <label className="text-xs font-semibold text-slate-600 uppercase">Quantidade de aulas</label>
+                  <div className="text-left bg-slate-50 rounded-xl p-5 border border-slate-200 space-y-2 text-sm text-slate-700 mb-6">
+                    <p><span className="font-semibold text-slate-800">Aluno(a):</span> {itemRecibo.nome}</p>
+                    <p><span className="font-semibold text-slate-800">Polo:</span> {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}</p>
+                    <p><span className="font-semibold text-slate-800">Instrumento:</span> {itemRecibo.instrumento}</p>
+                    <p>
+                      <span className="font-semibold text-slate-800">Tipo de cobrança:</span>{' '}
+                      {itemRecibo.tipoPagamento === 'individual'
+                        ? `Individual (${quantidadeAulasRecibo} aula${quantidadeAulasRecibo > 1 ? 's' : ''})`
+                        : 'Pacote'}
+                    </p>
+                    <p>
+                      <span className="font-semibold text-slate-800">Forma de pagamento:</span>{' '}
+                      {itemRecibo.formaPagamento === 'pix' ? 'Pix' : itemRecibo.formaPagamento === 'dinheiro' ? 'Dinheiro' : 'Outro'}
+                    </p>
+                    <p>
+                      <span className="font-semibold text-slate-800">Data do pagamento:</span>{' '}
+                      {itemRecibo.dataPagamento ? new Date(itemRecibo.dataPagamento + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
+                    </p>
+                  </div>
+
+                  {itemRecibo.tipoPagamento === 'individual' && (
+                    <div className="mb-4 print:hidden flex items-center justify-center gap-2">
+                      <label className="text-xs font-semibold text-slate-600 uppercase">Quantidade de aulas</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={quantidadeAulasRecibo}
+                        onChange={(e) => {
+                          const qtd = Math.max(1, Number(e.target.value) || 1);
+                          setQuantidadeAulasRecibo(qtd);
+                          setValorRecibo(String(VALOR_AULA_INDIVIDUAL * qtd));
+                        }}
+                        className="w-20 px-2 py-1.5 border border-slate-300 rounded-lg text-sm text-center"
+                      />
+                    </div>
+                  )}
+
+                  <div className="mb-6 print:hidden flex items-center justify-center gap-2">
+                    <label className="text-xs font-semibold text-slate-600 uppercase">Valor (editável)</label>
                     <input
                       type="number"
-                      min="1"
-                      value={quantidadeAulasRecibo}
-                      onChange={(e) => {
-                        const qtd = Math.max(1, Number(e.target.value) || 1);
-                        setQuantidadeAulasRecibo(qtd);
-                        setValorRecibo(String(VALOR_AULA_INDIVIDUAL * qtd));
-                      }}
-                      className="w-20 px-2 py-1.5 border border-slate-300 rounded-lg text-sm text-center"
+                      step="0.01"
+                      min="0"
+                      value={valorRecibo}
+                      onChange={(e) => setValorRecibo(e.target.value)}
+                      className="w-32 px-2 py-1.5 border border-slate-300 rounded-lg text-sm text-center"
                     />
                   </div>
-                )}
 
-                <div className="mb-6 print:hidden flex items-center justify-center gap-2">
-                  <label className="text-xs font-semibold text-slate-600 uppercase">Valor (editável)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={valorRecibo}
-                    onChange={(e) => setValorRecibo(e.target.value)}
-                    className="w-32 px-2 py-1.5 border border-slate-300 rounded-lg text-sm text-center"
-                  />
-                </div>
+                  <p className="text-4xl font-bold text-emerald-900 border-t-2 border-b-2 border-emerald-600 py-4 mb-6">
+                    {formatarBRL(valorRecibo)}
+                  </p>
 
-                <p className="text-4xl font-bold text-emerald-900 border-t-2 border-b-2 border-emerald-600 py-4 mb-6">
-                  {formatarBRL(valorRecibo)}
-                </p>
+                  <p className="text-sm text-slate-700 max-w-xl mx-auto leading-relaxed mb-8">
+                    Recebemos de <strong className="text-emerald-900">{itemRecibo.nome}</strong> o valor acima referente ao pagamento das aulas de {itemRecibo.instrumento} no Projeto Acordes de Davi, polo {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}.
+                  </p>
 
-                <p className="text-sm text-slate-700 max-w-xl mx-auto leading-relaxed mb-8">
-                  Recebemos de <strong className="text-emerald-900">{itemRecibo.nome}</strong> o valor acima referente ao pagamento das aulas de {itemRecibo.instrumento} no Projeto Acordes de Davi, polo {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}.
-                </p>
-
-                <div className="mt-10 pt-6 border-t border-slate-300 text-xs text-slate-600">
-                  <div className="border-b border-slate-400 w-56 mb-1 mx-auto"></div>
-                  <p className="font-bold text-slate-800">Coordenação do Projeto</p>
-                  <p className="text-slate-500">Recibo emitido em: {new Date().toLocaleDateString('pt-BR')}</p>
+                  <div className="mt-10 pt-6 border-t border-slate-300 text-xs text-slate-600">
+                    <div className="border-b border-slate-400 w-56 mb-1 mx-auto"></div>
+                    <p className="font-bold text-slate-800">Coordenação do Projeto</p>
+                    <p className="text-slate-500">Recibo emitido em: {new Date().toLocaleDateString('pt-BR')}</p>
+                  </div>
                 </div>
               </div>
             )}
@@ -2083,43 +2093,53 @@ export default function App() {
 
             {emitirCertificado && alunoCertificado && (
               <div className="bg-white border-8 border-double border-emerald-800 p-8 sm:p-12 rounded-2xl shadow-xl max-w-4xl mx-auto text-center relative overflow-hidden print:shadow-none print:border-8">
-                <div className="absolute top-4 right-4 print:hidden">
-                  <button 
-                    onClick={() => window.print()}
-                    className="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
-                  >
-                    <Printer className="w-4 h-4" /> Imprimir / Salvar PDF
-                  </button>
-                </div>
+                {/* Marca d'água — logo bem clarinha atrás do conteúdo, some das telas de edição, mas fica na impressão/PDF */}
+                <img
+                  src="/logo-acordes-de-davi.svg"
+                  alt=""
+                  aria-hidden="true"
+                  className="absolute inset-0 m-auto w-1/2 max-w-sm opacity-[0.06] pointer-events-none select-none"
+                />
 
-                <div className="mb-6">
-                  <Music className="w-16 h-16 text-emerald-700 mx-auto mb-2" />
-                  <h1 className="text-2xl sm:text-3xl font-serif font-bold text-emerald-900 uppercase tracking-widest">Projeto Acordes de Davi</h1>
-                  <p className="text-xs uppercase tracking-widest text-emerald-600 font-semibold mt-1">A Música Transforma Vidas</p>
-                </div>
-
-                <div className="my-8">
-                  <h2 className="text-4xl sm:text-5xl font-serif font-bold text-slate-800 tracking-wide mb-4">Certificado de Conclusão</h2>
-                  <p className="text-sm text-slate-600 uppercase tracking-wider mb-6">Certificamos para os devidos fins que</p>
-                  
-                  <p className="text-3xl sm:text-4xl font-bold text-emerald-900 border-b-2 border-emerald-600 pb-2 inline-block px-8 font-serif">
-                    {alunoCertificado}
-                  </p>
-
-                  <p className="text-sm text-slate-700 mt-6 max-w-2xl mx-auto leading-relaxed">
-                    concluiu com êxito o treinamento prático e teórico no curso de <strong className="text-emerald-900">{instrumentoCertificado}</strong>, ministrado pelo Projeto Acordes de Davi, demonstrando dedicação e aproveitamento exemplar.
-                  </p>
-                </div>
-
-                <div className="mt-12 pt-8 border-t border-slate-300 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-600 gap-6">
-                  <div>
-                    <p className="font-bold text-slate-800">1 Samuel 16:23</p>
-                    <p className="italic">"A música alivia a alma e traz paz ao coração."</p>
+                <div className="relative z-10">
+                  <div className="absolute top-4 right-4 print:hidden">
+                    <button
+                      onClick={() => window.print()}
+                      className="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
+                    >
+                      <Printer className="w-4 h-4" /> Imprimir / Salvar PDF
+                    </button>
                   </div>
-                  <div className="text-center sm:text-right">
-                    <div className="border-b border-slate-400 w-48 mb-1 mx-auto sm:mx-0"></div>
-                    <p className="font-bold text-slate-800">Coordenação do Projeto</p>
-                    <p className="text-slate-500">Data de Emissão: {new Date().toLocaleDateString('pt-BR')}</p>
+
+                  <div className="mb-6">
+                    <img src="/logo-acordes-de-davi.svg" alt="Logo Acordes de Davi" className="w-16 h-16 mx-auto mb-2" />
+                    <h1 className="text-2xl sm:text-3xl font-serif font-bold text-emerald-900 uppercase tracking-widest">Projeto Acordes de Davi</h1>
+                    <p className="text-xs uppercase tracking-widest text-emerald-600 font-semibold mt-1">A Música Transforma Vidas</p>
+                  </div>
+
+                  <div className="my-8">
+                    <h2 className="text-4xl sm:text-5xl font-serif font-bold text-slate-800 tracking-wide mb-4">Certificado de Conclusão</h2>
+                    <p className="text-sm text-slate-600 uppercase tracking-wider mb-6">Certificamos para os devidos fins que</p>
+
+                    <p className="text-3xl sm:text-4xl font-bold text-emerald-900 border-b-2 border-emerald-600 pb-2 inline-block px-8 font-serif">
+                      {alunoCertificado}
+                    </p>
+
+                    <p className="text-sm text-slate-700 mt-6 max-w-2xl mx-auto leading-relaxed">
+                      concluiu com êxito o treinamento prático e teórico no curso de <strong className="text-emerald-900">{instrumentoCertificado}</strong>, ministrado pelo Projeto Acordes de Davi, demonstrando dedicação e aproveitamento exemplar.
+                    </p>
+                  </div>
+
+                  <div className="mt-12 pt-8 border-t border-slate-300 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-600 gap-6">
+                    <div>
+                      <p className="font-bold text-slate-800">1 Samuel 16:23</p>
+                      <p className="italic">"A música alivia a alma e traz paz ao coração."</p>
+                    </div>
+                    <div className="text-center sm:text-right">
+                      <div className="border-b border-slate-400 w-48 mb-1 mx-auto sm:mx-0"></div>
+                      <p className="font-bold text-slate-800">Coordenação do Projeto</p>
+                      <p className="text-slate-500">Data de Emissão: {new Date().toLocaleDateString('pt-BR')}</p>
+                    </div>
                   </div>
                 </div>
               </div>
