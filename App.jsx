@@ -1732,39 +1732,68 @@ export default function App() {
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                 <CheckSquare className="w-6 h-6 text-emerald-600" /> Pauta de Chamada de Alunos
               </h2>
-              <p className="text-xs text-slate-500">Marque a presença dos alunos nas aulas com apenas um clique.</p>
+              <p className="text-xs text-slate-500">Marque a presença dos alunos nas aulas com apenas um clique — separado por polo.</p>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
-                    <th className="p-3">Aluno</th>
-                    <th className="p-3">Polo / Instrumento</th>
-                    <th className="p-3 text-center">Presença (Marcar Aula)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {agendamentos.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50 transition">
-                      <td className="p-3 font-bold text-slate-800">{item.nome}</td>
-                      <td className="p-3 text-xs text-slate-600">
-                        <span className="uppercase font-semibold text-emerald-700">{LOCALIZACOES.find(l => l.id === item.local)?.nome}</span> ({item.instrumento})
-                      </td>
-                      <td className="p-3 text-center">
-                        <button 
-                          onClick={() => alternarPresenca(item.id, item.presenca)}
-                          className={`px-4 py-1.5 rounded-lg text-xs font-bold transition inline-flex items-center gap-1.5 ${item.presenca ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                        >
-                          {item.presenca ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                          {item.presenca ? 'PRESENTE' : 'FALTOU / A MARCAR'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {agendamentos.length === 0 ? (
+              <div className="text-center py-12 text-slate-400">Nenhum aluno cadastrado ainda.</div>
+            ) : (
+              <div className="space-y-8">
+                {[
+                  ...LOCALIZACOES,
+                  // Cobre um agendamento cujo polo foi removido/renomeado e não bate com
+                  // nenhum id de LOCALIZACOES — assim ele não desaparece da pauta, só cai
+                  // num grupo "Outros" no final.
+                  { id: '__outros__', nome: 'Outros' }
+                ].map((polo) => {
+                  const alunosDoPolo = agendamentos.filter((item) => (
+                    polo.id === '__outros__'
+                      ? !LOCALIZACOES.some((l) => l.id === item.local)
+                      : item.local === polo.id
+                  ));
+                  if (alunosDoPolo.length === 0) return null;
+
+                  return (
+                    <div key={polo.id}>
+                      <h3 className="text-sm font-bold text-emerald-800 uppercase tracking-wide flex items-center gap-2 mb-2 pb-2 border-b border-emerald-100">
+                        <MapPin className="w-4 h-4" /> {polo.nome}
+                        <span className="text-xs font-medium text-slate-400 normal-case">
+                          ({alunosDoPolo.length} {alunosDoPolo.length === 1 ? 'aluno' : 'alunos'})
+                        </span>
+                      </h3>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
+                              <th className="p-3">Aluno</th>
+                              <th className="p-3">Instrumento</th>
+                              <th className="p-3 text-center">Presença (Marcar Aula)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 text-sm">
+                            {alunosDoPolo.map((item) => (
+                              <tr key={item.id} className="hover:bg-slate-50 transition">
+                                <td className="p-3 font-bold text-slate-800">{item.nome}</td>
+                                <td className="p-3 text-xs text-slate-600 capitalize">{item.instrumento}</td>
+                                <td className="p-3 text-center">
+                                  <button
+                                    onClick={() => alternarPresenca(item.id, item.presenca)}
+                                    className={`px-4 py-1.5 rounded-lg text-xs font-bold transition inline-flex items-center gap-1.5 ${item.presenca ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                  >
+                                    {item.presenca ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                                    {item.presenca ? 'PRESENTE' : 'FALTOU / A MARCAR'}
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
