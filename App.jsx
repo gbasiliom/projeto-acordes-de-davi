@@ -2076,72 +2076,77 @@ export default function App() {
               return (
                 <div className="space-y-3">
                   <h3 className="text-sm font-bold text-emerald-800 uppercase tracking-wide">Alunos em Pacote</h3>
-                  {[...LOCALIZACOES, { id: '__outros__', nome: 'Outros' }].map((polo) => {
-                    const doPolo = pacoteFiltrados.filter((item) => (
-                      polo.id === '__outros__'
-                        ? !LOCALIZACOES.some((l) => l.id === item.local)
-                        : item.local === polo.id
-                    ));
-                    if (doPolo.length === 0) return null;
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {[...LOCALIZACOES, { id: '__outros__', nome: 'Outros' }].map((polo) => {
+                      const doPolo = pacoteFiltrados.filter((item) => (
+                        polo.id === '__outros__'
+                          ? !LOCALIZACOES.some((l) => l.id === item.local)
+                          : item.local === polo.id
+                      ));
+                      if (doPolo.length === 0) return null;
 
-                    const igrejaDoPolo = igrejasCadastradas.find((i) => i.poloId === polo.id);
-                    const valorPacote = igrejaDoPolo?.valorCombinado != null && igrejaDoPolo.valorCombinado !== ''
-                      ? igrejaDoPolo.valorCombinado
-                      : (VALOR_PACOTE_POR_POLO[polo.id] ?? VALOR_PACOTE_PADRAO_OUTROS);
+                      const igrejaDoPolo = igrejasCadastradas.find((i) => i.poloId === polo.id);
+                      const valorPacote = igrejaDoPolo?.valorCombinado != null && igrejaDoPolo.valorCombinado !== ''
+                        ? igrejaDoPolo.valorCombinado
+                        : (VALOR_PACOTE_POR_POLO[polo.id] ?? VALOR_PACOTE_PADRAO_OUTROS);
 
-                    return (
-                      <div key={polo.id} className="bg-slate-50 rounded-xl border border-slate-200 p-4">
-                        <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
-                          <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                            <MapPin className="w-4 h-4 text-emerald-600" /> {polo.nome}
-                          </h4>
-                          <span className="text-xs font-medium text-slate-400 whitespace-nowrap">
-                            {doPolo.length} {doPolo.length === 1 ? 'aluno' : 'alunos'}
-                          </span>
-                        </div>
-                        {igrejaDoPolo?.nome && (
-                          <p className="text-xs text-slate-500 mb-3">Igreja mantenedora: {igrejaDoPolo.nome}</p>
-                        )}
+                      return (
+                        <div key={polo.id} className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col gap-3">
+                          <div>
+                            <div className="flex items-center justify-between gap-2">
+                              <h4 className="font-bold text-slate-800 text-sm flex items-center gap-1.5 truncate">
+                                <MapPin className="w-4 h-4 text-emerald-600 shrink-0" /> <span className="truncate">{polo.nome}</span>
+                              </h4>
+                              <span className="text-xs font-medium text-slate-400 whitespace-nowrap shrink-0">
+                                {doPolo.length} {doPolo.length === 1 ? 'aluno' : 'alunos'}
+                              </span>
+                            </div>
+                            {igrejaDoPolo?.nome && (
+                              <p className="text-xs text-slate-500 mt-0.5 uppercase">{igrejaDoPolo.nome}</p>
+                            )}
+                          </div>
 
-                        <ul className="space-y-1 mb-3">
-                          {doPolo.map((item) => (
-                            <li
-                              key={item.id}
-                              className="flex items-center justify-between gap-2 text-sm text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-1.5"
-                            >
-                              <span className="truncate">{item.nome}</span>
-                              <span className="text-xs text-slate-400 capitalize shrink-0">{item.instrumento}</span>
-                            </li>
-                          ))}
-                        </ul>
+                          <ul className="space-y-1">
+                            {doPolo.map((item) => (
+                              <li
+                                key={item.id}
+                                className="flex items-center justify-between gap-2 text-xs text-slate-700 bg-white border border-slate-200 rounded-lg px-2.5 py-1"
+                              >
+                                <span className="truncate">{item.nome}</span>
+                                <span className="text-[10px] text-slate-400 capitalize shrink-0">{item.instrumento}</span>
+                              </li>
+                            ))}
+                          </ul>
 
-                        {igrejaDoPolo ? (
-                          <div className="pt-3 border-t border-slate-200">
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                              <div>
-                                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Forma</label>
-                                <select
-                                  value={igrejaDoPolo.formaPagamento || 'pix'}
-                                  onChange={(e) => alterarFormaPagamentoIgreja(igrejaDoPolo.id, e.target.value)}
-                                  className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
-                                >
-                                  <option value="pix">Pix</option>
-                                  <option value="dinheiro">Dinheiro</option>
-                                  <option value="outro">Outro</option>
-                                </select>
+                          {igrejaDoPolo ? (
+                            <>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Forma</label>
+                                  <select
+                                    value={igrejaDoPolo.formaPagamento || 'pix'}
+                                    onChange={(e) => alterarFormaPagamentoIgreja(igrejaDoPolo.id, e.target.value)}
+                                    className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                                  >
+                                    <option value="pix">Pix</option>
+                                    <option value="dinheiro">Dinheiro</option>
+                                    <option value="outro">Outro</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Data do pagamento</label>
+                                  <input
+                                    type="date"
+                                    value={igrejaDoPolo.dataPagamento || ''}
+                                    onChange={(e) => alterarDataPagamentoIgreja(igrejaDoPolo.id, e.target.value)}
+                                    className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                                  />
+                                </div>
                               </div>
+
                               <div>
-                                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Data do pagamento</label>
-                                <input
-                                  type="date"
-                                  value={igrejaDoPolo.dataPagamento || ''}
-                                  onChange={(e) => alterarDataPagamentoIgreja(igrejaDoPolo.id, e.target.value)}
-                                  className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
-                                />
-                              </div>
-                              <div className="col-span-2 sm:col-span-1">
                                 <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Valor combinado (R$)</label>
-                                <div className="flex items-center gap-1">
+                                <div className="flex items-center gap-2">
                                   <input
                                     type="number"
                                     step="0.01"
@@ -2156,38 +2161,41 @@ export default function App() {
                                     onClick={() => alterarValorCombinadoIgreja(igrejaDoPolo.id, String(VALOR_PACOTE_POR_POLO[polo.id] ?? VALOR_PACOTE_PADRAO_OUTROS))}
                                     className="shrink-0 text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap"
                                   >
-                                    sugestão
+                                    usar sugestão
                                   </button>
                                 </div>
                               </div>
-                              <div className="flex flex-col items-start gap-1">
-                                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Status</label>
+
+                              <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
+                                <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${igrejaDoPolo.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                  {igrejaDoPolo.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
+                                </span>
                                 <button
                                   onClick={() => alternarPagamentoIgreja(igrejaDoPolo.id, igrejaDoPolo.pago)}
-                                  className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition ${igrejaDoPolo.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${igrejaDoPolo.pago ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}
                                 >
-                                  {igrejaDoPolo.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
+                                  {igrejaDoPolo.pago ? 'Marcar Pendente' : 'Marcar como Pago'}
                                 </button>
                               </div>
-                            </div>
 
-                            {igrejaDoPolo.dataPagamento && (
-                              <button
-                                onClick={() => abrirReciboIgreja(igrejaDoPolo)}
-                                className="mt-3 w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
-                              >
-                                <Printer className="w-3.5 h-3.5" /> Gerar Recibo (em nome da igreja)
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <p className="text-[11px] text-slate-400 italic pt-3 border-t border-slate-200">
-                            Cadastre a igreja mantenedora desse polo na aba Igrejas (valor sugerido: {formatarBRL(valorPacote)}) pra liberar forma, data, valor e recibo do pacote aqui.
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
+                              {igrejaDoPolo.dataPagamento && (
+                                <button
+                                  onClick={() => abrirReciboIgreja(igrejaDoPolo)}
+                                  className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
+                                >
+                                  <Printer className="w-3.5 h-3.5" /> Gerar Recibo
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            <p className="text-[11px] text-slate-400 italic pt-3 border-t border-slate-200">
+                              Cadastre a igreja mantenedora desse polo na aba Igrejas (valor sugerido: {formatarBRL(valorPacote)}) pra liberar forma, data, valor e recibo do pacote aqui.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })()}
