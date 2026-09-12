@@ -533,7 +533,27 @@ export default function App() {
       ? item.valorCombinado
       : valorSugeridoRecibo(item, polo, 1);
     setValorRecibo(String(valorPadrao));
-    setItemRecibo(item);
+    setItemRecibo({ ...item, origem: 'aluno' });
+  };
+
+  // Recibo de pagamento em pacote sai em nome da IGREJA mantenedora do polo, não do
+  // aluno individual — já que a cobrança do pacote agora é consolidada por igreja
+  // (aba Igrejas), em vez de cobrada aluno por aluno. Chamado direto do card da igreja.
+  const abrirReciboIgreja = (igreja) => {
+    setQuantidadeAulasRecibo(1);
+    const valorPadrao = igreja.valorCombinado != null && igreja.valorCombinado !== ''
+      ? igreja.valorCombinado
+      : (VALOR_PACOTE_POR_POLO[igreja.poloId] ?? VALOR_PACOTE_PADRAO_OUTROS);
+    setValorRecibo(String(valorPadrao));
+    setItemRecibo({
+      origem: 'igreja',
+      nome: igreja.nome,
+      local: igreja.poloId,
+      tipoPagamento: 'pacote',
+      formaPagamento: igreja.formaPagamento,
+      dataPagamento: igreja.dataPagamento,
+      valorCombinado: igreja.valorCombinado
+    });
   };
 
   // Valor combinado é o que vira a cobrança via Pix online (botão "Pagar com Pix" no
@@ -1925,12 +1945,18 @@ export default function App() {
                   </div>
 
                   {item.dataPagamento && (
-                    <button
-                      onClick={() => abrirRecibo(item)}
-                      className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
-                    >
-                      <Printer className="w-3.5 h-3.5" /> Gerar Recibo
-                    </button>
+                    (item.tipoPagamento || 'pacote') === 'individual' ? (
+                      <button
+                        onClick={() => abrirRecibo(item)}
+                        className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
+                      >
+                        <Printer className="w-3.5 h-3.5" /> Gerar Recibo
+                      </button>
+                    ) : (
+                      <p className="text-[11px] text-slate-400 italic text-center">
+                        Pagamento em pacote — o recibo sai em nome da igreja mantenedora, na aba Igrejas.
+                      </p>
+                    )
                   )}
                 </div>
               ))}
@@ -1970,6 +1996,31 @@ export default function App() {
 
                   <h2 className="text-3xl font-serif font-bold text-slate-800 tracking-wide mb-6">Recibo de Pagamento</h2>
 
+                  <div className="text-left space-y-1.5 text-sm text-slate-700 mb-6">
+                    <p>
+                      <span className="font-semibold text-slate-800">{itemRecibo.origem === 'igreja' ? 'Igreja mantenedora:' : 'Aluno(a):'}</span>{' '}
+                      {itemRecibo.nome}
+                    </p>
+                    <p><span className="font-semibold text-slate-800">Polo:</span> {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}</p>
+                    {itemRecibo.instrumento && (
+                      <p><span className="font-semibold text-slate-800">Instrumento:</span> {itemRecibo.instrumento}</p>
+                    )}
+                    <p>
+                      <span className="font-semibold text-slate-800">Tipo de cobrança:</span>{' '}
+                      {itemRecibo.tipoPagamento === 'individual'
+                        ? `Individual (${quantidadeAulasRecibo} aula${quantidadeAulasRecibo > 1 ? 's' : ''})`
+                        : 'Pacote'}
+                    </p>
+                    <p>
+                      <span className="font-semibold text-slate-800">Forma de pagamento:</span>{' '}
+                      {itemRecibo.formaPagamento === 'pix' ? 'Pix' : itemRecibo.formaPagamento === 'dinheiro' ? 'Dinheiro' : 'Outro'}
+                    </p>
+                    <p>
+                      <span className="font-semibold text-slate-800">Data do pagamento:</span>{' '}
+                      {itemRecibo.dataPagamento ? new Date(itemRecibo.dataPagamento + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
+                    </p>
+                  </div>
+
                   {itemRecibo.tipoPagamento === 'individual' && (
                     <div className="mb-4 print:hidden flex items-center justify-center gap-2">
                       <label className="text-xs font-semibold text-slate-600 uppercase">Quantidade de aulas</label>
@@ -2005,17 +2056,8 @@ export default function App() {
 
                   <p className="text-sm text-slate-700 max-w-xl mx-auto leading-relaxed mb-8">
                     Recebemos de <strong className="text-emerald-900">{itemRecibo.nome}</strong> o valor acima referente ao pagamento{' '}
-                    {itemRecibo.tipoPagamento === 'individual'
-                      ? `de ${quantidadeAulasRecibo} aula${quantidadeAulasRecibo > 1 ? 's' : ''}`
-                      : 'do pacote'}{' '}
-                    de {itemRecibo.instrumento} no Projeto Acordes de Davi, polo{' '}
-                    <strong className="text-emerald-900">{LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}</strong>,
-                    pago via <strong className="text-emerald-900">
-                      {itemRecibo.formaPagamento === 'pix' ? 'Pix' : itemRecibo.formaPagamento === 'dinheiro' ? 'dinheiro' : 'outro meio'}
-                    </strong> em{' '}
-                    <strong className="text-emerald-900">
-                      {itemRecibo.dataPagamento ? new Date(itemRecibo.dataPagamento + 'T00:00:00').toLocaleDateString('pt-BR') : 'data não informada'}
-                    </strong>.
+                    {itemRecibo.instrumento ? `das aulas de ${itemRecibo.instrumento}` : 'do pacote de aulas'} no Projeto Acordes de Davi, polo{' '}
+                    {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}.
                   </p>
 
                   <div className="mt-10 pt-6 border-t border-slate-300 text-xs text-slate-600">
@@ -2671,6 +2713,15 @@ export default function App() {
                           ) : (
                             <p className="text-[11px] text-slate-400 mt-3 italic">Defina o valor combinado acima pra poder gerar o Pix.</p>
                           )
+                        )}
+
+                        {igreja.dataPagamento && (
+                          <button
+                            onClick={() => abrirReciboIgreja(igreja)}
+                            className="mt-2 w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
+                          >
+                            <Printer className="w-3.5 h-3.5" /> Gerar Recibo (em nome da igreja)
+                          </button>
                         )}
                       </>
                     )}
