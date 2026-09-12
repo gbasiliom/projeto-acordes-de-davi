@@ -148,6 +148,16 @@ export default function App() {
   const [erroPolo, setErroPolo] = useState('');
   const [salvandoPolo, setSalvandoPolo] = useState(false);
   const [editandoPolo, setEditandoPolo] = useState(null);
+
+  // --- Cadastro de Igrejas (mantenedoras que pagam o pacote de um polo) ---
+  // Área nova, adicionada por cima do que já existia — não muda em nada o
+  // funcionamento por aluno (aba Pagamentos / Portal do Aluno continuam iguais).
+  const [igrejasCadastradas, setIgrejasCadastradas] = useState([]);
+  const [novaIgreja, setNovaIgreja] = useState({ nome: '', poloId: '', responsavel: '', telefone: '' });
+  const [erroIgreja, setErroIgreja] = useState('');
+  const [salvandoIgreja, setSalvandoIgreja] = useState(false);
+  const [editandoIgreja, setEditandoIgreja] = useState(null);
+
   const [loading, setLoading] = useState(true);
   const [abaAtiva, setAbaAtiva] = useState('painel');
   const [usuario, setUsuario] = useState(null);
@@ -173,6 +183,13 @@ export default function App() {
   const [dadosPix, setDadosPix] = useState(null); // { qrCode, qrCodeBase64, paymentId, valor }
   const [erroPix, setErroPix] = useState('');
   const [gerandoPix, setGerandoPix] = useState(false);
+
+  // --- Pagamento via Pix da Igreja (uma cobrança única por igreja/polo, gerada
+  // pelo admin — separado do Pix por aluno acima, que continua existindo igual) ---
+  const [igrejaComPixAberto, setIgrejaComPixAberto] = useState(null); // id da igreja com Pix aberto
+  const [dadosPixIgreja, setDadosPixIgreja] = useState(null);
+  const [erroPixIgreja, setErroPixIgreja] = useState('');
+  const [gerandoPixIgreja, setGerandoPixIgreja] = useState(false);
 
   // --- Assistente de cadastro e agendamento (aluno) ---
   const [poloSelecionado, setPoloSelecionado] = useState('');
@@ -245,12 +262,21 @@ export default function App() {
       console.error("Erro ao buscar polos:", error);
     });
 
+    // Lista de igrejas cadastradas (mantenedoras de pacote) — pública pra leitura,
+    // só o admin pode criar/editar/remover (mesma regra de polos/turmas).
+    const unsubIgrejas = onSnapshot(collection(db, 'igrejas'), (snapshot) => {
+      setIgrejasCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.error("Erro ao buscar igrejas:", error);
+    });
+
     return () => {
       unsubAuth();
       unsubscribe();
       unsubVagas();
       unsubTurmas();
       unsubPolos();
+      unsubIgrejas();
     };
   }, []);
 
@@ -1038,6 +1064,155 @@ export default function App() {
     }
   };
 
+  // --- Igrejas (mantenedoras de pacote) ---
+  // Não existe "igreja padrão" nem tombstone aqui (diferente de Polos) — toda igreja
+  // cadastrada foi criada pela tela, então criar/editar/remover são operações diretas.
+  const adicionarIgreja = async (e) => {
+    e.preventDefault();
+    setErroIgreja('');
+
+    const nome = novaIgreja.nome.trim();
+    if (!nome) {
+      setErroIgreja('Preencha o nome da igreja.');
+      return;
+    }
+    if (!novaIgreja.poloId) {
+      setErroIgreja('Escolha a qual polo essa igreja está vinculada.');
+      return;
+    }
+    let id = slugificarPolo(nome);
+    if (!id) {
+      setErroIgreja('Esse nome não gera um identificador válido — use letras ou números.');
+      return;
+    }
+    const idsExistentes = new Set(igrejasCadastradas.map(i => i.id));
+    if (idsExistentes.has(id)) {
+      let sufixo = 2;
+      while (idsExistentes.has(`${id}${sufixo}`)) sufixo++;
+      id = `${id}${sufixo}`;
+    }
+
+    setSalvandoIgreja(true);
+    try {
+      await setDoc(doc(db, 'igrejas', id), {
+        nome,
+        poloId: novaIgreja.poloId,
+        responsavel: novaIgreja.responsavel.trim(),
+        telefone: novaIgreja.telefone.trim(),
+        criadoEm: new Date().toISOString()
+      });
+      setNovaIgreja({ nome: '', poloId: '', responsavel: '', telefone: '' });
+    } catch (err) {
+      console.error('Erro ao criar igreja:', err);
+      setErroIgreja('Erro ao salvar a igreja. Tente novamente.');
+    } finally {
+      setSalvandoIgreja(false);
+    }
+  };
+
+  const iniciarEdicaoIgreja = (igreja) => setEditandoIgreja({
+    id: igreja.id,
+    nome: igreja.nome,
+    poloId: igreja.poloId || '',
+    responsavel: igreja.responsavel || '',
+    telefone: igreja.telefone || ''
+  });
+  const cancelarEdicaoIgreja = () => setEditandoIgreja(null);
+
+  const salvarEdicaoIgreja = async (e) => {
+    e.preventDefault();
+    if (!editandoIgreja.nome.trim() || !editandoIgreja.poloId) return;
+    try {
+      await updateDoc(doc(db, 'igrejas', editandoIgreja.id), {
+        nome: editandoIgreja.nome.trim(),
+        poloId: editandoIgreja.poloId,
+        responsavel: editandoIgreja.responsavel.trim(),
+        telefone: editandoIgreja.telefone.trim()
+      });
+      setEditandoIgreja(null);
+    } catch (err) {
+      console.error('Erro ao editar igreja:', err);
+      alert('Erro ao salvar as alterações da igreja.');
+    }
+  };
+
+  const removerIgreja = async (igreja) => {
+    if (!window.confirm(`Remover o cadastro da igreja "${igreja.nome}"? Isso não apaga alunos, turmas nem o polo — só remove esse cadastro de cobrança.`)) return;
+    try {
+      await deleteDoc(doc(db, 'igrejas', igreja.id));
+    } catch (err) {
+      console.error('Erro ao remover igreja:', err);
+      alert('Erro ao remover a igreja.');
+    }
+  };
+
+  // Valor combinado da igreja: é a cobrança ÚNICA que vira o Pix do polo inteiro —
+  // completamente separado do "Valor combinado" de cada aluno na aba Pagamentos, que
+  // continua existindo e funcionando do jeito que já funcionava.
+  const alterarValorCombinadoIgreja = async (id, novoValor) => {
+    try {
+      const valor = novoValor === '' ? null : Number(novoValor);
+      await updateDoc(doc(db, 'igrejas', id), { valorCombinado: valor });
+    } catch (err) {
+      console.error('Erro ao alterar valor combinado da igreja:', err);
+      alert('Erro ao salvar o valor combinado.');
+    }
+  };
+
+  const alterarFormaPagamentoIgreja = async (id, novaForma) => {
+    try {
+      await updateDoc(doc(db, 'igrejas', id), { formaPagamento: novaForma });
+    } catch (err) {
+      console.error('Erro ao alterar forma de pagamento da igreja:', err);
+      alert('Erro ao alterar a forma de pagamento.');
+    }
+  };
+
+  const alterarDataPagamentoIgreja = async (id, novaData) => {
+    try {
+      await updateDoc(doc(db, 'igrejas', id), { dataPagamento: novaData });
+    } catch (err) {
+      console.error('Erro ao alterar data de pagamento da igreja:', err);
+      alert('Erro ao alterar a data de pagamento.');
+    }
+  };
+
+  const alternarPagamentoIgreja = async (id, statusAtual) => {
+    try {
+      await updateDoc(doc(db, 'igrejas', id), { pago: !statusAtual });
+    } catch (err) {
+      console.error('Erro ao atualizar pagamento da igreja:', err);
+    }
+  };
+
+  // Gera o Pix da igreja — chamado pelo ADMIN (não pelo aluno), pra cobrar o mantenedor
+  // do polo de uma vez só. Usa a mesma função serverless /api/mercadopago/criar-pix,
+  // mandando igrejaId em vez de agendamentoId, pra distinguir os dois casos no back-end.
+  const gerarPixIgreja = async (igreja) => {
+    setErroPixIgreja('');
+    setDadosPixIgreja(null);
+    setGerandoPixIgreja(true);
+    try {
+      const idToken = await usuario.getIdToken();
+      const resposta = await fetch('/api/mercadopago/criar-pix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ igrejaId: igreja.id, email: usuario.email })
+      });
+      const dados = await resposta.json();
+      if (!resposta.ok) {
+        throw new Error(dados?.erro || 'Não foi possível gerar o Pix agora.');
+      }
+      setDadosPixIgreja(dados);
+      setIgrejaComPixAberto(igreja.id);
+    } catch (err) {
+      console.error('Erro ao gerar Pix da igreja:', err);
+      setErroPixIgreja(err.message || 'Não foi possível gerar o Pix agora. Tente novamente em instantes.');
+    } finally {
+      setGerandoPixIgreja(false);
+    }
+  };
+
   // Baixa um arquivo .json com uma foto de tudo que está carregado agora (alunos,
   // turmas, polos e vagas ocupadas) — não faz nenhuma leitura extra no Firestore, só
   // empacota o que os listeners já trouxeram. Serve de segurança antes de qualquer
@@ -1146,6 +1321,17 @@ export default function App() {
     }
   }, [agendamentos, pixEmAndamento]);
 
+  // Mesma lógica de fechar sozinho, só que pro Pix da igreja (fecha quando o webhook
+  // marcar aquela igreja como paga).
+  useEffect(() => {
+    if (!igrejaComPixAberto) return;
+    const igreja = igrejasCadastradas.find(i => i.id === igrejaComPixAberto);
+    if (igreja && igreja.pago) {
+      setIgrejaComPixAberto(null);
+      setDadosPixIgreja(null);
+    }
+  }, [igrejasCadastradas, igrejaComPixAberto]);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
       <header className="bg-emerald-800 text-white shadow-md print:hidden">
@@ -1196,6 +1382,12 @@ export default function App() {
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'horarios' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
                 >
                   <Clock className="w-4 h-4" /> Horários
+                </button>
+                <button
+                  onClick={() => setAbaAtiva('igrejas')}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'igrejas' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                >
+                  <BookOpen className="w-4 h-4" /> Igrejas
                 </button>
               </>
             )}
@@ -2181,6 +2373,278 @@ export default function App() {
                 <p className="text-xs text-slate-400 mt-1">Clique em "Restaurar grade padrão" acima ou crie a primeira turma no formulário.</p>
               </div>
             )}
+          </div>
+        )}
+
+        {abaAtiva === 'igrejas' && (
+          <div className="space-y-6 max-w-4xl mx-auto">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <div className="mb-4 pb-4 border-b border-slate-100">
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <BookOpen className="w-6 h-6 text-emerald-600" /> Igrejas Mantenedoras
+                </h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  Cadastre a igreja que mantém/paga o pacote de um polo, e gere UMA cobrança Pix única
+                  pro polo inteiro — em vez de cobrar aluno por aluno. Isso não muda nada no que já
+                  existia: os campos de pagamento de cada aluno na aba Pagamentos e o botão de Pix no
+                  Portal do Aluno continuam funcionando do mesmo jeito.
+                </p>
+              </div>
+
+              {erroIgreja && (
+                <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{erroIgreja}</span>
+                </div>
+              )}
+
+              <form onSubmit={adicionarIgreja} className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end bg-slate-50 p-4 rounded-lg border border-slate-200 mb-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nome da Igreja</label>
+                  <input
+                    type="text"
+                    value={novaIgreja.nome}
+                    onChange={(e) => setNovaIgreja({ ...novaIgreja, nome: e.target.value })}
+                    placeholder="Ex: Igreja Tabernáculo - Penha do Côco"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Polo que ela mantém</label>
+                  <select
+                    value={novaIgreja.poloId}
+                    onChange={(e) => setNovaIgreja({ ...novaIgreja, poloId: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="">Selecione o polo...</option>
+                    {LOCALIZACOES.map((polo) => (
+                      <option key={polo.id} value={polo.id}>{polo.nome}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Responsável (opcional)</label>
+                  <input
+                    type="text"
+                    value={novaIgreja.responsavel}
+                    onChange={(e) => setNovaIgreja({ ...novaIgreja, responsavel: e.target.value })}
+                    placeholder="Ex: Pastor João"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Telefone (opcional)</label>
+                  <input
+                    type="text"
+                    value={novaIgreja.telefone}
+                    onChange={(e) => setNovaIgreja({ ...novaIgreja, telefone: e.target.value })}
+                    placeholder="Ex: (98) 90000-0000"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <button
+                    type="submit"
+                    disabled={salvandoIgreja}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-sm disabled:opacity-60"
+                  >
+                    {salvandoIgreja ? 'Salvando...' : 'Adicionar Igreja'}
+                  </button>
+                </div>
+              </form>
+
+              {erroPixIgreja && (
+                <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{erroPixIgreja}</span>
+                </div>
+              )}
+
+              {dadosPixIgreja && (
+                <div className="mb-4 bg-white border-4 border-double border-emerald-700 rounded-2xl p-6 text-center shadow-xl max-w-sm mx-auto">
+                  <h3 className="text-base font-bold text-emerald-900 mb-1">Pagamento via Pix da Igreja</h3>
+                  <p className="text-xs text-slate-500 mb-4">Escaneie o QR Code ou copie o código no app do banco do responsável pelo pagamento.</p>
+                  {dadosPixIgreja.qrCodeBase64 && (
+                    <img
+                      src={`data:image/png;base64,${dadosPixIgreja.qrCodeBase64}`}
+                      alt="QR Code Pix"
+                      className="mx-auto mb-4 w-48 h-48 rounded-lg border border-slate-200"
+                    />
+                  )}
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(dadosPixIgreja.qrCode || '');
+                      setMensagemSucesso('Código Pix copiado!');
+                      setTimeout(() => setMensagemSucesso(''), 3000);
+                    }}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition mb-2"
+                  >
+                    Copiar código Pix
+                  </button>
+                  <button
+                    onClick={() => { setDadosPixIgreja(null); setIgrejaComPixAberto(null); }}
+                    className="w-full text-xs text-slate-500 hover:text-slate-700 transition"
+                  >
+                    Cancelar
+                  </button>
+                  <p className="text-[11px] text-slate-400 mt-4">
+                    A confirmação é automática — assim que o pagamento cair, essa tela fecha sozinha e o
+                    status da igreja muda pra "Pago".
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {igrejasCadastradas.map((igreja) => (
+                  <div key={igreja.id} className="p-4 rounded-lg border border-slate-200 bg-slate-50">
+                    {editandoIgreja?.id === igreja.id ? (
+                      <form onSubmit={salvarEdicaoIgreja} className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
+                        <input
+                          type="text"
+                          value={editandoIgreja.nome}
+                          onChange={(e) => setEditandoIgreja({ ...editandoIgreja, nome: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                        />
+                        <select
+                          value={editandoIgreja.poloId}
+                          onChange={(e) => setEditandoIgreja({ ...editandoIgreja, poloId: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                        >
+                          <option value="">Selecione o polo...</option>
+                          {LOCALIZACOES.map((polo) => (
+                            <option key={polo.id} value={polo.id}>{polo.nome}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={editandoIgreja.responsavel}
+                          onChange={(e) => setEditandoIgreja({ ...editandoIgreja, responsavel: e.target.value })}
+                          placeholder="Responsável"
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                        />
+                        <input
+                          type="text"
+                          value={editandoIgreja.telefone}
+                          onChange={(e) => setEditandoIgreja({ ...editandoIgreja, telefone: e.target.value })}
+                          placeholder="Telefone"
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                        />
+                        <div className="flex gap-2 sm:col-span-2">
+                          <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-semibold transition">Salvar</button>
+                          <button type="button" onClick={cancelarEdicaoIgreja} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-semibold transition">Cancelar</button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <div>
+                            <p className="text-sm font-bold text-slate-800">{igreja.nome}</p>
+                            <p className="text-xs text-slate-500">
+                              Polo: {LOCALIZACOES.find(l => l.id === igreja.poloId)?.nome || 'Polo não encontrado'}
+                              {igreja.responsavel ? ` · ${igreja.responsavel}` : ''}
+                              {igreja.telefone ? ` · ${igreja.telefone}` : ''}
+                            </p>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              {agendamentos.filter(a => a.local === igreja.poloId).length} aluno(s) nesse polo
+                            </p>
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            <button
+                              onClick={() => iniciarEdicaoIgreja(igreja)}
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => removerIgreja(igreja)}
+                              className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Remover
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-slate-200">
+                          <div>
+                            <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Forma</label>
+                            <select
+                              value={igreja.formaPagamento || 'pix'}
+                              onChange={(e) => alterarFormaPagamentoIgreja(igreja.id, e.target.value)}
+                              className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                            >
+                              <option value="pix">Pix</option>
+                              <option value="dinheiro">Dinheiro</option>
+                              <option value="outro">Outro</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Data do pagamento</label>
+                            <input
+                              type="date"
+                              value={igreja.dataPagamento || ''}
+                              onChange={(e) => alterarDataPagamentoIgreja(igreja.id, e.target.value)}
+                              className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </div>
+                          <div className="col-span-2 sm:col-span-1">
+                            <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Valor combinado (R$)</label>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={igreja.valorCombinado ?? ''}
+                                onChange={(e) => alterarValorCombinadoIgreja(igreja.id, e.target.value)}
+                                placeholder="0,00"
+                                className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => alterarValorCombinadoIgreja(igreja.id, String(VALOR_PACOTE_POR_POLO[igreja.poloId] ?? VALOR_PACOTE_PADRAO_OUTROS))}
+                                className="shrink-0 text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap"
+                              >
+                                sugestão
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-start gap-1">
+                            <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Status</label>
+                            <button
+                              onClick={() => alternarPagamentoIgreja(igreja.id, igreja.pago)}
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition ${igreja.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
+                            >
+                              {igreja.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {!igreja.pago && (
+                          igreja.valorCombinado ? (
+                            <button
+                              onClick={() => gerarPixIgreja(igreja)}
+                              disabled={gerandoPixIgreja}
+                              className="mt-3 w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
+                            >
+                              <DollarSign className="w-3.5 h-3.5" />
+                              {gerandoPixIgreja && igrejaComPixAberto !== igreja.id ? 'Gerando Pix...' : `Gerar Pix de ${formatarBRL(igreja.valorCombinado)} pra essa igreja`}
+                            </button>
+                          ) : (
+                            <p className="text-[11px] text-slate-400 mt-3 italic">Defina o valor combinado acima pra poder gerar o Pix.</p>
+                          )
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
+                {igrejasCadastradas.length === 0 && (
+                  <div className="text-center py-8 bg-slate-50 rounded-lg border border-dashed border-slate-300">
+                    <BookOpen className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                    <p className="text-slate-500 font-medium text-sm">Nenhuma igreja cadastrada ainda.</p>
+                    <p className="text-xs text-slate-400 mt-1">Cadastre a igreja mantenedora de um polo no formulário acima pra gerar a cobrança consolidada.</p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
