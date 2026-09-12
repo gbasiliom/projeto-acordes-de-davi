@@ -481,15 +481,20 @@ export default function App() {
     }
   };
 
-  // Correção de cadastro — só nome e telefone, que são só texto e não têm nenhum efeito
-  // colateral. Polo, instrumento e horário ficam de fora de propósito: cada um deles está
-  // amarrado a uma "vaga" reservada (coleção vagas/slotId) e mudar isso aqui, sem liberar a
-  // vaga antiga e ocupar uma nova, deixaria a grade de horários inconsistente. Pra mudar
-  // aluno de polo/horário, o caminho por enquanto continua sendo excluir e recadastrar.
+  // Correção de cadastro — nome, telefone, polo e instrumento. Importante: isso só
+  // corrige o CADASTRO (o texto que aparece nas telas); não mexe na "vaga" reservada
+  // (coleção vagas/slotId) que trava aquele dia/horário. Se mudar o polo ou o instrumento
+  // de alguém aqui, o horário antigo continua marcado como ocupado (ninguém mais consegue
+  // pegar aquele lugar) e o horário exibido pro aluno pode não bater mais com o novo polo/
+  // instrumento. Pra manter a grade 100% certa depois de mudar polo/instrumento, o ideal
+  // ainda é excluir e recadastrar (libera a vaga antiga e deixa escolher um horário novo)
+  // — mas ficou liberado editar aqui direto pra correções rápidas de cadastro.
   const iniciarEdicaoAluno = (item) => setEditandoAluno({
     id: item.id,
     nome: item.nome || '',
-    telefone: item.telefone || ''
+    telefone: item.telefone || '',
+    local: item.local || '',
+    instrumento: item.instrumento || ''
   });
   const cancelarEdicaoAluno = () => setEditandoAluno(null);
   const salvarEdicaoAluno = async (e) => {
@@ -502,7 +507,9 @@ export default function App() {
     try {
       await updateDoc(doc(db, 'agendamentos', editandoAluno.id), {
         nome,
-        telefone: editandoAluno.telefone.trim()
+        telefone: editandoAluno.telefone.trim(),
+        local: editandoAluno.local,
+        instrumento: editandoAluno.instrumento
       });
       setEditandoAluno(null);
     } catch (err) {
@@ -1998,13 +2005,43 @@ export default function App() {
                         )}
                       </td>
                       <td className="p-3">
-                        <div className="text-xs font-semibold uppercase text-emerald-700">
-                          {LOCALIZACOES.find(l => l.id === item.local)?.nome}
-                        </div>
-                        <div className="text-xs capitalize text-slate-500">{item.instrumento}</div>
+                        {emEdicao ? (
+                          <div className="flex flex-col gap-1.5">
+                            <select
+                              form={`editar-aluno-${item.id}`}
+                              value={editandoAluno.local}
+                              onChange={(e) => setEditandoAluno({ ...editandoAluno, local: e.target.value })}
+                              className="w-full px-2 py-1 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                            >
+                              {LOCALIZACOES.map((polo) => (
+                                <option key={polo.id} value={polo.id}>{polo.nome}</option>
+                              ))}
+                            </select>
+                            <select
+                              form={`editar-aluno-${item.id}`}
+                              value={editandoAluno.instrumento}
+                              onChange={(e) => setEditandoAluno({ ...editandoAluno, instrumento: e.target.value })}
+                              className="w-full px-2 py-1 border border-slate-300 rounded-lg text-xs bg-white capitalize focus:ring-2 focus:ring-emerald-500"
+                            >
+                              <option value="violao">Violão</option>
+                              <option value="bateria">Bateria</option>
+                            </select>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="text-xs font-semibold uppercase text-emerald-700">
+                              {LOCALIZACOES.find(l => l.id === item.local)?.nome}
+                            </div>
+                            <div className="text-xs capitalize text-slate-500">{item.instrumento}</div>
+                          </>
+                        )}
                       </td>
                       <td className="p-3 text-xs text-slate-600">
-                        {formatarHorario(item)}
+                        {emEdicao ? (
+                          <span className="text-[10px] text-amber-600 italic">Horário não muda aqui</span>
+                        ) : (
+                          formatarHorario(item)
+                        )}
                       </td>
                       <td className="p-3">
                         <span className={`text-xs px-2 py-1 rounded font-medium uppercase ${item.pago ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
