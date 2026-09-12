@@ -1195,6 +1195,32 @@ export default function App() {
     }
   };
 
+  // Ativa a cobrança em pacote de um polo direto pela aba Pagamentos, sem precisar ir na
+  // aba Igrejas primeiro — cria um cadastro de igreja "mínimo" (só nome e polo) que já
+  // libera forma/data/valor/status/recibo nesse card. Responsável e telefone ficam em
+  // branco e podem ser preenchidos depois, editando essa igreja normalmente na aba Igrejas.
+  const criarRegistroPacotePolo = async (polo) => {
+    let id = slugificarPolo(polo.nome) || polo.id;
+    const idsExistentes = new Set(igrejasCadastradas.map(i => i.id));
+    if (idsExistentes.has(id)) {
+      let sufixo = 2;
+      while (idsExistentes.has(`${id}${sufixo}`)) sufixo++;
+      id = `${id}${sufixo}`;
+    }
+    try {
+      await setDoc(doc(db, 'igrejas', id), {
+        nome: polo.nome,
+        poloId: polo.id,
+        responsavel: '',
+        telefone: '',
+        criadoEm: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Erro ao ativar pagamento do polo:', err);
+      alert('Erro ao ativar o pagamento desse polo. Tente novamente.');
+    }
+  };
+
   // Valor combinado da igreja: é a cobrança ÚNICA que vira o Pix do polo inteiro —
   // completamente separado do "Valor combinado" de cada aluno na aba Pagamentos, que
   // continua existindo e funcionando do jeito que já funcionava.
@@ -2188,9 +2214,18 @@ export default function App() {
                               )}
                             </>
                           ) : (
-                            <p className="text-[11px] text-slate-400 italic pt-3 border-t border-slate-200">
-                              Cadastre a igreja mantenedora desse polo na aba Igrejas (valor sugerido: {formatarBRL(valorPacote)}) pra liberar forma, data, valor e recibo do pacote aqui.
-                            </p>
+                            <div className="pt-3 border-t border-slate-200">
+                              <p className="text-[11px] text-slate-400 italic mb-2">
+                                Ainda sem cobrança ativada nesse polo (valor sugerido: {formatarBRL(valorPacote)}).
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => criarRegistroPacotePolo(polo)}
+                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition"
+                              >
+                                Ativar pagamento desse polo
+                              </button>
+                            </div>
                           )}
                         </div>
                       );
