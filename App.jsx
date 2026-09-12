@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound } from 'lucide-react';
+import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
@@ -148,6 +148,7 @@ export default function App() {
   const [erroPolo, setErroPolo] = useState('');
   const [salvandoPolo, setSalvandoPolo] = useState(false);
   const [editandoPolo, setEditandoPolo] = useState(null);
+  const [editandoAluno, setEditandoAluno] = useState(null);
 
   // --- Cadastro de Igrejas (mantenedoras que pagam o pacote de um polo) ---
   // Área nova, adicionada por cima do que já existia — não muda em nada o
@@ -477,6 +478,36 @@ export default function App() {
         setMensagemImportacao('Aluno excluído, mas não consegui liberar o horário dele automaticamente — confira se a regra do Firestore pra "vagas" já permite exclusão pelo admin.');
         setTimeout(() => setMensagemImportacao(''), 10000);
       }
+    }
+  };
+
+  // Correção de cadastro — só nome e telefone, que são só texto e não têm nenhum efeito
+  // colateral. Polo, instrumento e horário ficam de fora de propósito: cada um deles está
+  // amarrado a uma "vaga" reservada (coleção vagas/slotId) e mudar isso aqui, sem liberar a
+  // vaga antiga e ocupar uma nova, deixaria a grade de horários inconsistente. Pra mudar
+  // aluno de polo/horário, o caminho por enquanto continua sendo excluir e recadastrar.
+  const iniciarEdicaoAluno = (item) => setEditandoAluno({
+    id: item.id,
+    nome: item.nome || '',
+    telefone: item.telefone || ''
+  });
+  const cancelarEdicaoAluno = () => setEditandoAluno(null);
+  const salvarEdicaoAluno = async (e) => {
+    e.preventDefault();
+    const nome = editandoAluno.nome.trim();
+    if (!nome) {
+      alert('O nome não pode ficar em branco.');
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'agendamentos', editandoAluno.id), {
+        nome,
+        telefone: editandoAluno.telefone.trim()
+      });
+      setEditandoAluno(null);
+    } catch (err) {
+      console.error('Erro ao editar cadastro do aluno:', err);
+      alert('Erro ao salvar as alterações do aluno.');
     }
   };
 
@@ -1936,11 +1967,35 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
-                  {agendamentosFiltrados.map((item) => (
+                  {agendamentosFiltrados.map((item) => {
+                    const emEdicao = editandoAluno?.id === item.id;
+                    return (
                     <tr key={item.id} className="hover:bg-slate-50 transition">
                       <td className="p-3">
-                        <div className="font-bold text-slate-800">{item.nome}</div>
-                        <div className="text-xs text-slate-500">{item.telefone || 'Sem telefone'}</div>
+                        {emEdicao ? (
+                          <form id={`editar-aluno-${item.id}`} onSubmit={salvarEdicaoAluno} className="flex flex-col gap-1.5">
+                            <input
+                              type="text"
+                              value={editandoAluno.nome}
+                              onChange={(e) => setEditandoAluno({ ...editandoAluno, nome: e.target.value })}
+                              placeholder="Nome"
+                              autoFocus
+                              className="w-full px-2 py-1 border border-slate-300 rounded-lg text-sm font-bold focus:ring-2 focus:ring-emerald-500"
+                            />
+                            <input
+                              type="text"
+                              value={editandoAluno.telefone}
+                              onChange={(e) => setEditandoAluno({ ...editandoAluno, telefone: e.target.value })}
+                              placeholder="Telefone"
+                              className="w-full px-2 py-1 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </form>
+                        ) : (
+                          <>
+                            <div className="font-bold text-slate-800">{item.nome}</div>
+                            <div className="text-xs text-slate-500">{item.telefone || 'Sem telefone'}</div>
+                          </>
+                        )}
                       </td>
                       <td className="p-3">
                         <div className="text-xs font-semibold uppercase text-emerald-700">
@@ -1957,15 +2012,43 @@ export default function App() {
                         </span>
                       </td>
                       <td className="p-3 text-right">
-                        <button 
-                          onClick={() => excluirAgendamento(item.id)}
-                          className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" /> Excluir
-                        </button>
+                        {emEdicao ? (
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="submit"
+                              form={`editar-aluno-${item.id}`}
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                            >
+                              Salvar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelarEdicaoAluno}
+                              className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => iniciarEdicaoAluno(item)}
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                            >
+                              <Pencil className="w-3.5 h-3.5" /> Editar
+                            </button>
+                            <button
+                              onClick={() => excluirAgendamento(item.id)}
+                              className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Excluir
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
