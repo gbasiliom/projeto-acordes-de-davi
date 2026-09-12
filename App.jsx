@@ -1433,6 +1433,108 @@ export default function App() {
     }
   }, [igrejasCadastradas, igrejaComPixAberto]);
 
+  // Card de pagamento de UM aluno — usado tanto pros alunos individuais quanto pros
+  // alunos em pacote na aba Pagamentos, pra mostrar sempre os mesmos campos (tipo,
+  // forma, data, valor combinado e status) nos dois casos, com o mesmo visual.
+  // É uma função comum (não um componente à parte) de propósito: assim o React não
+  // recria/perde o foco dos campos a cada letra digitada.
+  const renderCardPagamento = (item) => (
+    <div key={item.id} className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col justify-between gap-3">
+      <div>
+        <h3 className="font-bold text-slate-800 text-base">{item.nome}</h3>
+        <p className="text-xs text-slate-500 mt-0.5 uppercase">{LOCALIZACOES.find(l => l.id === item.local)?.nome} - {item.instrumento}</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Tipo</label>
+          <select
+            value={item.tipoPagamento || 'pacote'}
+            onChange={(e) => alterarTipoPagamento(item.id, e.target.value)}
+            className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+          >
+            <option value="pacote">Pacote</option>
+            <option value="individual">Individual</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Forma</label>
+          <select
+            value={item.formaPagamento || 'pix'}
+            onChange={(e) => alterarFormaPagamento(item.id, e.target.value)}
+            className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+          >
+            <option value="pix">Pix</option>
+            <option value="dinheiro">Dinheiro</option>
+            <option value="outro">Outro</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Data do pagamento</label>
+        <input
+          type="date"
+          value={item.dataPagamento || ''}
+          onChange={(e) => alterarDataPagamento(item.id, e.target.value)}
+          className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+        />
+      </div>
+
+      <div>
+        <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Valor combinado (R$) — pro Pix online</label>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={item.valorCombinado ?? ''}
+            onChange={(e) => alterarValorCombinado(item.id, e.target.value)}
+            placeholder="0,00"
+            className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+          />
+          <button
+            type="button"
+            onClick={() => alterarValorCombinado(item.id, String(valorSugeridoRecibo(item, LOCALIZACOES.find(l => l.id === item.local))))}
+            className="shrink-0 text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap"
+          >
+            usar sugestão
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-400 mt-0.5">
+          {item.valorCombinado ? 'O aluno já pode pagar esse valor pelo Portal do Aluno.' : 'Sem valor definido, o aluno não vê o botão de pagar online ainda.'}
+        </p>
+      </div>
+
+      <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
+        <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${item.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+          {item.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
+        </span>
+        <button
+          onClick={() => alternarPagamento(item.id, item.pago)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${item.pago ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}
+        >
+          {item.pago ? 'Marcar Pendente' : 'Marcar como Pago'}
+        </button>
+      </div>
+
+      {item.dataPagamento && (
+        (item.tipoPagamento || 'pacote') === 'individual' ? (
+          <button
+            onClick={() => abrirRecibo(item)}
+            className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
+          >
+            <Printer className="w-3.5 h-3.5" /> Gerar Recibo
+          </button>
+        ) : (
+          <p className="text-[11px] text-slate-400 italic text-center">
+            Pagamento em pacote — o recibo sai em nome da igreja mantenedora, na aba Igrejas.
+          </p>
+        )
+      )}
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
       <header className="bg-emerald-800 text-white shadow-md print:hidden">
@@ -1960,11 +2062,9 @@ export default function App() {
             </div>
 
             {(() => {
-              // Alunos em pacote não têm mais o card cheio aqui — o pagamento deles é
-              // combinado e cobrado de uma vez pela igreja mantenedora do polo (aba
-              // Igrejas). Aqui vira só uma lista com o nome de cada um e o valor do
-              // pacote daquele polo, pra você conferir rapidinho quem está em cada polo
-              // sem repetir os mesmos campos de pagamento pra todo mundo.
+              // Alunos em pacote agora mostram o mesmo card completo dos individuais
+              // (tipo, forma, data, valor, status) — só ficam agrupados por polo, com
+              // o valor do pacote combinado daquele polo em destaque no topo do grupo.
               const pacoteFiltrados = agendamentos.filter(item => (
                 (filtroLocalPagamentos === 'todos' || item.local === filtroLocalPagamentos)
                 && (item.tipoPagamento || 'pacote') !== 'individual'
@@ -2000,22 +2100,9 @@ export default function App() {
                             Pacote combinado: {formatarBRL(valorPacote)}
                           </span>
                         </div>
-                        <ul className="divide-y divide-slate-200">
-                          {doPolo.map((item) => (
-                            <li key={item.id} className="flex items-center justify-between gap-2 py-2 text-sm">
-                              <div>
-                                <span className="font-semibold text-slate-800">{item.nome}</span>
-                                <span className="text-xs text-slate-500 capitalize"> — {item.instrumento}</span>
-                              </div>
-                              <button
-                                onClick={() => alterarTipoPagamento(item.id, 'individual')}
-                                className="text-[11px] font-semibold text-amber-700 hover:text-amber-900 underline whitespace-nowrap"
-                              >
-                                Mudar pra individual
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          {doPolo.map((item) => renderCardPagamento(item))}
+                        </div>
                       </div>
                     );
                   })}
@@ -2037,102 +2124,7 @@ export default function App() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {agendamentos
                 .filter(item => (filtroLocalPagamentos === 'todos' || item.local === filtroLocalPagamentos) && (item.tipoPagamento || 'pacote') === 'individual')
-                .map((item) => (
-                <div key={item.id} className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col justify-between gap-3">
-                  <div>
-                    <h3 className="font-bold text-slate-800 text-base">{item.nome}</h3>
-                    <p className="text-xs text-slate-500 mt-0.5 uppercase">{LOCALIZACOES.find(l => l.id === item.local)?.nome} - {item.instrumento}</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Tipo</label>
-                      <select
-                        value={item.tipoPagamento || 'pacote'}
-                        onChange={(e) => alterarTipoPagamento(item.id, e.target.value)}
-                        className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
-                      >
-                        <option value="pacote">Pacote</option>
-                        <option value="individual">Individual</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Forma</label>
-                      <select
-                        value={item.formaPagamento || 'pix'}
-                        onChange={(e) => alterarFormaPagamento(item.id, e.target.value)}
-                        className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
-                      >
-                        <option value="pix">Pix</option>
-                        <option value="dinheiro">Dinheiro</option>
-                        <option value="outro">Outro</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Data do pagamento</label>
-                    <input
-                      type="date"
-                      value={item.dataPagamento || ''}
-                      onChange={(e) => alterarDataPagamento(item.id, e.target.value)}
-                      className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Valor combinado (R$) — pro Pix online</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={item.valorCombinado ?? ''}
-                        onChange={(e) => alterarValorCombinado(item.id, e.target.value)}
-                        placeholder="0,00"
-                        className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => alterarValorCombinado(item.id, String(valorSugeridoRecibo(item, LOCALIZACOES.find(l => l.id === item.local))))}
-                        className="shrink-0 text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap"
-                      >
-                        usar sugestão
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-0.5">
-                      {item.valorCombinado ? 'O aluno já pode pagar esse valor pelo Portal do Aluno.' : 'Sem valor definido, o aluno não vê o botão de pagar online ainda.'}
-                    </p>
-                  </div>
-
-                  <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
-                    <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${item.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                      {item.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
-                    </span>
-                    <button
-                      onClick={() => alternarPagamento(item.id, item.pago)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${item.pago ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}
-                    >
-                      {item.pago ? 'Marcar Pendente' : 'Marcar como Pago'}
-                    </button>
-                  </div>
-
-                  {item.dataPagamento && (
-                    (item.tipoPagamento || 'pacote') === 'individual' ? (
-                      <button
-                        onClick={() => abrirRecibo(item)}
-                        className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
-                      >
-                        <Printer className="w-3.5 h-3.5" /> Gerar Recibo
-                      </button>
-                    ) : (
-                      <p className="text-[11px] text-slate-400 italic text-center">
-                        Pagamento em pacote — o recibo sai em nome da igreja mantenedora, na aba Igrejas.
-                      </p>
-                    )
-                  )}
-                </div>
-              ))}
+                .map((item) => renderCardPagamento(item))}
             </div>
 
             {itemRecibo && (
