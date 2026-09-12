@@ -68,12 +68,6 @@ module.exports = async (req, res) => {
     let valor, descricao, externalReference, payerEmail, primeiroNome, sobrenome, refParaSalvar;
 
     if (igrejaId) {
-      // Cobrança consolidada de uma igreja/polo — só o admin pode gerar.
-      if (decoded.email !== ADMIN_EMAIL) {
-        res.status(403).json({ erro: 'Só a coordenação pode gerar o Pix de uma igreja.' });
-        return;
-      }
-
       const igrejaRef = db.collection('igrejas').doc(igrejaId);
       const snap = await igrejaRef.get();
       if (!snap.exists) {
@@ -81,6 +75,14 @@ module.exports = async (req, res) => {
         return;
       }
       const igreja = snap.data();
+
+      // Cobrança consolidada de uma igreja/polo — o admin pode gerar pra qualquer
+      // igreja, e a própria igreja (logada no Portal da Igreja, criado pela função
+      // api/igrejas/criar-acesso) pode gerar a dela mesma.
+      if (decoded.email !== ADMIN_EMAIL && decoded.uid !== igreja.uid) {
+        res.status(403).json({ erro: 'Você não tem permissão pra gerar o Pix dessa igreja.' });
+        return;
+      }
 
       if (igreja.pago) {
         res.status(400).json({ erro: 'Esse pagamento já está marcado como pago.' });
