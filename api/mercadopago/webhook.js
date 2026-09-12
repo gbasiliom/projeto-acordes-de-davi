@@ -1,103 +1,184 @@
-// Função serverless da Vercel: POST /api/mercadopago/webhook
+// Função serverless da Vercel: POST /api/mercadopago/criar-pix
 //
-// É pra essa URL que você aponta a notificação (webhook) no painel do Mercado Pago
-// (Sua integração > Webhooks > URL de produção): https://SEU-DOMINIO/api/mercadopago/webhook
+// Tem dois jeitos de chamar essa função, sem misturar um com o outro:
 //
-// Toda vez que o status de um pagamento muda (ex: aprovado), o Mercado Pago chama essa
-// função. Ela busca os detalhes do pagamento na API do Mercado Pago (nunca confia só no
-// que veio na notificação) e, se estiver aprovado, marca o agendamento correspondente
-// como pago no Firestore — o mesmo agendamento fica visível em tempo real tanto no
-// Portal do Aluno quanto na aba Pagamentos do admin, sem ninguém precisar clicar em nada.
-const { getDb } = require('../_firebaseAdmin');
+// 1) { agendamentoId, email } — chamada pelo botão "Pagar com Pix" no Portal do Aluno
+//    (App.jsx). Confere que quem está pedindo é o próprio aluno dono do agendamento,
+//    olha o "Valor combinado" que o admin definiu na aba Pagamentos, e cobra só a aula
+//    dele.
+// 2) { igrejaId, email } — chamada pelo admin na aba "Igrejas", pra gerar UMA cobrança
+//    única pro mantenedor/igreja de um polo inteiro (em vez de cobrar aluno por aluno).
+//    Só o admin (mesmo e-mail configurado em ADMIN_EMAIL) pode gerar esse tipo de Pix.
+//
+// Nos dois casos, cria uma cobrança Pix de verdade no Mercado Pago — devolvendo o QR
+// Code (imagem) e o código "copia e cola" pra pagar no app do banco.
+//
+// Precisa de duas variáveis de ambiente na Vercel: MERCADOPAGO_ACCESS_TOKEN (Access
+// Token do Mercado Pago) e FIREBASE_SERVICE_ACCOUNT (ver api/_firebaseAdmin.js). Sem
+// elas, essa função responde com um erro explicando o que falta configurar — não quebra
+// o resto do site.
+const { getDb, getAuthAdmin } = require('../_firebaseAdmin');
 const crypto = require('crypto');
 
-// Confere a assinatura enviada pelo Mercado Pago, quando a variável de ambiente
-// MERCADOPAGO_WEBHOOK_SECRET estiver configurada (painel do Mercado Pago > Webhooks >
-// "Assinatura secreta"). Sem essa variável configurada, a função aceita a notificação
-// sem validar a assinatura — funciona igual, só sem essa camada extra de segurança.
-function assinaturaValida(req) {
-  const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
-  if (!secret) return true;
-
-  const assinatura = req.headers['x-signature'];
-  const requestId = req.headers['x-request-id'];
-  if (!assinatura) return false;
-
-  const partes = Object.fromEntries(
-    assinatura.split(',').map((p) => p.trim().split('=').map((s) => s.trim()))
-  );
-  const { ts, v1 } = partes;
-  if (!ts || !v1) return false;
-
-  const dataId = req.query['data.id'] || req.body?.data?.id || '';
-  const manifest = `id:${dataId};request-id:${requestId};ts:${ts};`;
-  const hash = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
-  return hash === v1;
-}
+// Mesmo e-mail de admin usado no App.jsx (frontend) — precisa ficar em sincronia com a
+// constante ADMIN_EMAIL de lá. Só esse e-mail pode gerar o Pix consolidado de uma igreja.
+const ADMIN_EMAIL = 'auladeinstrumentosmusicais2026@gmail.com';
 
 module.exports = async (req, res) => {
-  if (req.method !== 'POST' && req.method !== 'GET') {
-    res.status(405).end();
+  if (req.method !== 'POST') {
+    res.status(405).json({ erro: 'Método não permitido.' });
+    return;
+  }
+
+  const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (!accessToken) {
+    res.status(500).json({
+      erro: 'O pagamento online ainda não foi configurado neste site (falta a chave do Mercado Pago). Fale com a coordenação.'
+    });
     return;
   }
 
   try {
-    if (!assinaturaValida(req)) {
-      console.warn('Webhook do Mercado Pago com assinatura inválida — ignorado.');
-      // Responde 200 mesmo assim: se responder erro, o Mercado Pago fica reenviando a
-      // mesma notificação sem parar.
-      res.status(200).end();
+    const { agendamentoId, igrejaId, email } = req.body || {};
+    if (!agendamentoId && !igrejaId) {
+      res.status(400).json({ erro: 'agendamentoId ou igrejaId é obrigatório.' });
       return;
     }
 
-    const tipo = req.query.type || req.body?.type;
-    const paymentId = req.query['data.id'] || req.body?.data?.id;
-
-    if (tipo !== 'payment' || !paymentId) {
-      res.status(200).end();
+    const authHeader = req.headers.authorization || '';
+    const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!idToken) {
+      res.status(401).json({ erro: 'Faça login novamente antes de pagar.' });
       return;
     }
 
-    const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
-    if (!accessToken) {
-      console.error('Webhook recebido, mas MERCADOPAGO_ACCESS_TOKEN não está configurada.');
-      res.status(200).end();
-      return;
-    }
-
-    const respostaMP = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    });
-    const pagamento = await respostaMP.json();
-
-    if (!respostaMP.ok || !pagamento?.external_reference) {
-      res.status(200).end();
+    let decoded;
+    try {
+      decoded = await getAuthAdmin().verifyIdToken(idToken);
+    } catch (err) {
+      res.status(401).json({ erro: 'Sessão expirada — faça login novamente.' });
       return;
     }
 
     const db = getDb();
-    const agendamentoRef = db.collection('agendamentos').doc(pagamento.external_reference);
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const protocolo = req.headers['x-forwarded-proto'] || 'https';
+    const notificationUrl = `${protocolo}://${host}/api/mercadopago/webhook`;
 
-    if (pagamento.status === 'approved') {
-      await agendamentoRef.set(
-        {
-          pago: true,
-          formaPagamento: 'pix',
-          dataPagamento: new Date().toISOString().slice(0, 10),
-          statusPagamentoMP: 'approved',
-          valorPago: pagamento.transaction_amount
-        },
-        { merge: true }
-      );
+    let valor, descricao, externalReference, payerEmail, primeiroNome, sobrenome, refParaSalvar;
+
+    if (igrejaId) {
+      // Cobrança consolidada de uma igreja/polo — só o admin pode gerar.
+      if (decoded.email !== ADMIN_EMAIL) {
+        res.status(403).json({ erro: 'Só a coordenação pode gerar o Pix de uma igreja.' });
+        return;
+      }
+
+      const igrejaRef = db.collection('igrejas').doc(igrejaId);
+      const snap = await igrejaRef.get();
+      if (!snap.exists) {
+        res.status(404).json({ erro: 'Igreja não encontrada.' });
+        return;
+      }
+      const igreja = snap.data();
+
+      if (igreja.pago) {
+        res.status(400).json({ erro: 'Esse pagamento já está marcado como pago.' });
+        return;
+      }
+
+      valor = Number(igreja.valorCombinado);
+      if (!valor || valor <= 0) {
+        res.status(400).json({ erro: 'Defina o valor combinado dessa igreja antes de gerar o Pix.' });
+        return;
+      }
+
+      const partesNome = (igreja.nome || 'Igreja').trim().split(/\s+/);
+      primeiroNome = partesNome[0] || 'Igreja';
+      sobrenome = partesNome.slice(1).join(' ') || 'Acordes de Davi';
+      descricao = `Projeto Acordes de Davi — pacote do polo (${igreja.nome || igrejaId})`;
+      externalReference = `igreja:${igrejaId}`;
+      payerEmail = email || `${decoded.uid}@admin.acordesdedavi.app`;
+      refParaSalvar = igrejaRef;
     } else {
-      await agendamentoRef.set({ statusPagamentoMP: pagamento.status }, { merge: true });
+      const agendamentoRef = db.collection('agendamentos').doc(agendamentoId);
+      const snap = await agendamentoRef.get();
+      if (!snap.exists) {
+        res.status(404).json({ erro: 'Agendamento não encontrado.' });
+        return;
+      }
+      const agendamento = snap.data();
+
+      if (agendamento.uid !== decoded.uid) {
+        res.status(403).json({ erro: 'Esse agendamento não é seu.' });
+        return;
+      }
+      if (agendamento.pago) {
+        res.status(400).json({ erro: 'Esse pagamento já está marcado como pago.' });
+        return;
+      }
+
+      valor = Number(agendamento.valorCombinado);
+      if (!valor || valor <= 0) {
+        res.status(400).json({ erro: 'A coordenação ainda não combinou um valor pra esse pagamento.' });
+        return;
+      }
+
+      const partesNome = (agendamento.nome || 'Aluno').trim().split(/\s+/);
+      primeiroNome = partesNome[0] || 'Aluno';
+      sobrenome = partesNome.slice(1).join(' ') || 'Acordes de Davi';
+      descricao = `Projeto Acordes de Davi — ${agendamento.instrumento || 'aula'} (${agendamento.local || ''})`;
+      externalReference = agendamentoId;
+      payerEmail = email || `${decoded.uid}@alunos.acordesdedavi.app`;
+      refParaSalvar = agendamentoRef;
     }
 
-    res.status(200).end();
+    const respostaMP = await fetch('https://api.mercadopago.com/v1/payments', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'X-Idempotency-Key': crypto.randomUUID()
+      },
+      body: JSON.stringify({
+        transaction_amount: Math.round(valor * 100) / 100,
+        description: descricao,
+        payment_method_id: 'pix',
+        external_reference: externalReference,
+        notification_url: notificationUrl,
+        payer: {
+          email: payerEmail,
+          first_name: primeiroNome,
+          last_name: sobrenome
+        }
+      })
+    });
+
+    const pagamento = await respostaMP.json();
+
+    if (!respostaMP.ok) {
+      console.error('Erro do Mercado Pago ao criar pagamento:', pagamento);
+      res.status(502).json({ erro: pagamento?.message || 'O Mercado Pago recusou a criação do Pix.' });
+      return;
+    }
+
+    const dadosPix = pagamento?.point_of_interaction?.transaction_data || {};
+
+    // Guarda o id do pagamento no documento (agendamento ou igreja) — útil pra conferir
+    // manualmente no painel do Mercado Pago se algum dia precisar investigar um caso.
+    await refParaSalvar.set(
+      { pagamentoMPId: pagamento.id, statusPagamentoMP: pagamento.status },
+      { merge: true }
+    );
+
+    res.status(200).json({
+      paymentId: pagamento.id,
+      qrCode: dadosPix.qr_code || '',
+      qrCodeBase64: dadosPix.qr_code_base64 || '',
+      valor
+    });
   } catch (err) {
-    console.error('Erro no webhook do Mercado Pago:', err);
-    // Sempre responde 200 — um erro nosso não deve fazer o Mercado Pago martelar
-    // retentativas em loop. O problema fica logado nos Logs da Vercel pra investigar.
-    res.status(200).end();
+    console.error('Erro ao criar pagamento Pix:', err);
+    res.status(500).json({ erro: 'Erro interno ao gerar o Pix. Tente novamente em instantes.' });
   }
 };
