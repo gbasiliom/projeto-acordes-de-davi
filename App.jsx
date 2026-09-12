@@ -1959,9 +1959,84 @@ export default function App() {
               )}
             </div>
 
+            {(() => {
+              // Alunos em pacote não têm mais o card cheio aqui — o pagamento deles é
+              // combinado e cobrado de uma vez pela igreja mantenedora do polo (aba
+              // Igrejas). Aqui vira só uma lista com o nome de cada um e o valor do
+              // pacote daquele polo, pra você conferir rapidinho quem está em cada polo
+              // sem repetir os mesmos campos de pagamento pra todo mundo.
+              const pacoteFiltrados = agendamentos.filter(item => (
+                (filtroLocalPagamentos === 'todos' || item.local === filtroLocalPagamentos)
+                && (item.tipoPagamento || 'pacote') !== 'individual'
+              ));
+              if (pacoteFiltrados.length === 0) return null;
+
+              return (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-bold text-emerald-800 uppercase tracking-wide">Alunos em Pacote</h3>
+                  {[...LOCALIZACOES, { id: '__outros__', nome: 'Outros' }].map((polo) => {
+                    const doPolo = pacoteFiltrados.filter((item) => (
+                      polo.id === '__outros__'
+                        ? !LOCALIZACOES.some((l) => l.id === item.local)
+                        : item.local === polo.id
+                    ));
+                    if (doPolo.length === 0) return null;
+
+                    const igrejaDoPolo = igrejasCadastradas.find((i) => i.poloId === polo.id);
+                    const valorPacote = igrejaDoPolo?.valorCombinado != null && igrejaDoPolo.valorCombinado !== ''
+                      ? igrejaDoPolo.valorCombinado
+                      : (VALOR_PACOTE_POR_POLO[polo.id] ?? VALOR_PACOTE_PADRAO_OUTROS);
+
+                    return (
+                      <div key={polo.id} className="bg-slate-50 rounded-xl border border-slate-200 p-4">
+                        <div className="flex items-center justify-between flex-wrap gap-2 mb-2 pb-2 border-b border-slate-200">
+                          <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                            <MapPin className="w-4 h-4 text-emerald-600" /> {polo.nome}
+                            <span className="text-xs font-medium text-slate-400 normal-case">
+                              ({doPolo.length} {doPolo.length === 1 ? 'aluno' : 'alunos'})
+                            </span>
+                          </h4>
+                          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full whitespace-nowrap">
+                            Pacote combinado: {formatarBRL(valorPacote)}
+                          </span>
+                        </div>
+                        <ul className="divide-y divide-slate-200">
+                          {doPolo.map((item) => (
+                            <li key={item.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                              <div>
+                                <span className="font-semibold text-slate-800">{item.nome}</span>
+                                <span className="text-xs text-slate-500 capitalize"> — {item.instrumento}</span>
+                              </div>
+                              <button
+                                onClick={() => alterarTipoPagamento(item.id, 'individual')}
+                                className="text-[11px] font-semibold text-amber-700 hover:text-amber-900 underline whitespace-nowrap"
+                              >
+                                Mudar pra individual
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {(() => {
+              const individuaisFiltrados = agendamentos.filter(item => (
+                (filtroLocalPagamentos === 'todos' || item.local === filtroLocalPagamentos)
+                && (item.tipoPagamento || 'pacote') === 'individual'
+              ));
+              if (individuaisFiltrados.length === 0) return null;
+              return (
+                <h3 className="text-sm font-bold text-emerald-800 uppercase tracking-wide">Alunos Individuais</h3>
+              );
+            })()}
+
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {agendamentos
-                .filter(item => filtroLocalPagamentos === 'todos' || item.local === filtroLocalPagamentos)
+                .filter(item => (filtroLocalPagamentos === 'todos' || item.local === filtroLocalPagamentos) && (item.tipoPagamento || 'pacote') === 'individual')
                 .map((item) => (
                 <div key={item.id} className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col justify-between gap-3">
                   <div>
