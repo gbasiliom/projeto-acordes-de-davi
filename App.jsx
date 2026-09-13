@@ -149,6 +149,8 @@ export default function App() {
   const [salvandoPolo, setSalvandoPolo] = useState(false);
   const [editandoPolo, setEditandoPolo] = useState(null);
   const [editandoAluno, setEditandoAluno] = useState(null);
+  const [erroEdicaoAluno, setErroEdicaoAluno] = useState('');
+  const [salvandoEdicaoAluno, setSalvandoEdicaoAluno] = useState(false);
 
   // --- Cadastro de Igrejas (mantenedoras que pagam o pacote de um polo) ---
   // Área nova, adicionada por cima do que já existia — não muda em nada o
@@ -489,21 +491,45 @@ export default function App() {
   // instrumento. Pra manter a grade 100% certa depois de mudar polo/instrumento, o ideal
   // ainda é excluir e recadastrar (libera a vaga antiga e deixa escolher um horário novo)
   // — mas ficou liberado editar aqui direto pra correções rápidas de cadastro.
-  const iniciarEdicaoAluno = (item) => setEditandoAluno({
-    id: item.id,
-    nome: item.nome || '',
-    telefone: item.telefone || '',
-    local: item.local || '',
-    instrumento: item.instrumento || ''
-  });
-  const cancelarEdicaoAluno = () => setEditandoAluno(null);
+  const iniciarEdicaoAluno = (item) => {
+    setErroEdicaoAluno('');
+    setEditandoAluno({
+      id: item.id,
+      nome: item.nome || '',
+      telefone: item.telefone || '',
+      local: item.local || '',
+      instrumento: item.instrumento || '',
+      novoEmail: '',
+      novaSenha: ''
+    });
+  };
+  const cancelarEdicaoAluno = () => {
+    setEditandoAluno(null);
+    setErroEdicaoAluno('');
+  };
+
+  // Salva nome/telefone/polo/instrumento direto no Firestore (como já era). Se o campo
+  // "novo e-mail" ou "nova senha" for preenchido, chama a API que corrige o LOGIN do
+  // aluno (Firebase Auth) — isso não dá pra fazer aqui do navegador, porque mudar o
+  // e-mail/senha de outra conta não é permitido pelo SDK do cliente logado como admin.
+  // Não mostra o e-mail atual porque ele não fica salvo no Firestore, só no Auth — o
+  // campo sempre começa em branco e, se deixar em branco, o e-mail/senha atuais continuam
+  // os mesmos.
   const salvarEdicaoAluno = async (e) => {
     e.preventDefault();
     const nome = editandoAluno.nome.trim();
     if (!nome) {
-      alert('O nome não pode ficar em branco.');
+      setErroEdicaoAluno('O nome não pode ficar em branco.');
       return;
     }
+    const novoEmail = editandoAluno.novoEmail.trim();
+    const novaSenha = editandoAluno.novaSenha;
+    if (novaSenha && novaSenha.length < 6) {
+      setErroEdicaoAluno('A nova senha precisa ter pelo menos 6 caracteres.');
+      return;
+    }
+    setErroEdicaoAluno('');
+    setSalvandoEdicaoAluno(true);
     try {
       await updateDoc(doc(db, 'agendamentos', editandoAluno.id), {
         nome,
@@ -511,10 +537,26 @@ export default function App() {
         local: editandoAluno.local,
         instrumento: editandoAluno.instrumento
       });
+
+      if (novoEmail || novaSenha) {
+        const idToken = await usuario.getIdToken();
+        const resposta = await fetch('/api/alunos/editar-acesso', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+          body: JSON.stringify({ agendamentoId: editandoAluno.id, novoEmail, novaSenha })
+        });
+        const dados = await resposta.json();
+        if (!resposta.ok) {
+          throw new Error(dados?.erro || 'Cadastro salvo, mas não consegui atualizar o e-mail/senha agora.');
+        }
+      }
+
       setEditandoAluno(null);
     } catch (err) {
       console.error('Erro ao editar cadastro do aluno:', err);
-      alert('Erro ao salvar as alterações do aluno.');
+      setErroEdicaoAluno(err.message || 'Erro ao salvar as alterações do aluno.');
+    } finally {
+      setSalvandoEdicaoAluno(false);
     }
   };
 
@@ -1977,7 +2019,8 @@ export default function App() {
                   {agendamentosFiltrados.map((item) => {
                     const emEdicao = editandoAluno?.id === item.id;
                     return (
-                    <tr key={item.id} className="hover:bg-slate-50 transition">
+                    <React.Fragment key={item.id}>
+                    <tr className="hover:bg-slate-50 transition">
                       <td className="p-3">
                         {emEdicao ? (
                           <form id={`editar-aluno-${item.id}`} onSubmit={salvarEdicaoAluno} className="flex flex-col gap-1.5">
@@ -1996,6 +2039,24 @@ export default function App() {
                               placeholder="Telefone"
                               className="w-full px-2 py-1 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500"
                             />
+                            <div className="pt-1.5 mt-0.5 border-t border-slate-200">
+                              <label className="block text-[10px] font-semibold text-slate-400 uppercase mb-1">Corrigir login (opcional)</label>
+                              <input
+                                type="email"
+                                value={editandoAluno.novoEmail}
+                                onChange={(e) => setEditandoAluno({ ...editandoAluno, novoEmail: e.target.value })}
+                                placeholder="Novo e-mail de login"
+                                className="w-full px-2 py-1 border border-slate-300 rounded-lg text-xs mb-1 focus:ring-2 focus:ring-emerald-500"
+                              />
+                              <input
+                                type="text"
+                                value={editandoAluno.novaSenha}
+                                onChange={(e) => setEditandoAluno({ ...editandoAluno, novaSenha: e.target.value })}
+                                placeholder="Nova senha (6+ caracteres)"
+                                className="w-full px-2 py-1 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500"
+                              />
+                              <p className="text-[10px] text-slate-400 mt-0.5">Deixe em branco pra manter o e-mail/senha atuais.</p>
+                            </div>
                           </form>
                         ) : (
                           <>
@@ -2054,14 +2115,16 @@ export default function App() {
                             <button
                               type="submit"
                               form={`editar-aluno-${item.id}`}
-                              className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                              disabled={salvandoEdicaoAluno}
+                              className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition"
                             >
-                              Salvar
+                              {salvandoEdicaoAluno ? 'Salvando...' : 'Salvar'}
                             </button>
                             <button
                               type="button"
                               onClick={cancelarEdicaoAluno}
-                              className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                              disabled={salvandoEdicaoAluno}
+                              className="bg-slate-200 hover:bg-slate-300 disabled:opacity-60 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
                             >
                               Cancelar
                             </button>
@@ -2084,6 +2147,16 @@ export default function App() {
                         )}
                       </td>
                     </tr>
+                    {emEdicao && erroEdicaoAluno && (
+                      <tr>
+                        <td colSpan={5} className="p-0">
+                          <div className="bg-red-50 border-t border-red-200 text-red-700 text-xs px-3 py-2">
+                            {erroEdicaoAluno}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                     );
                   })}
                 </tbody>
