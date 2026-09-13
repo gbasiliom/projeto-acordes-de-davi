@@ -28,6 +28,100 @@ const normalizarTexto = (texto) => (texto || '')
 
 const slugificarPolo = normalizarTexto;
 
+// --- Geração do calendário de aulas por turma (aba Pauta) ---
+// O campo "dia" de uma turma é texto livre (ex: "Sábado (Quinzenal - Semana B)"),
+// então em vez de guardar um campo estruturado novo, a gente interpreta esse texto
+// (já normalizado, sem acento/espaço) pra descobrir o dia da semana e a cadência.
+const DIAS_SEMANA_CHAVES = [
+  { chave: 'domingo', indice: 0 },
+  { chave: 'segunda', indice: 1 },
+  { chave: 'terca', indice: 2 },
+  { chave: 'quarta', indice: 3 },
+  { chave: 'quinta', indice: 4 },
+  { chave: 'sexta', indice: 5 },
+  { chave: 'sabado', indice: 6 }
+];
+
+// Lê o texto livre de "dia" de uma turma e descobre: o dia da semana (0=domingo
+// ... 6=sábado), se é quinzenal, e se é a "Semana A" ou "Semana B" de um par
+// quinzenal alternado (usado em Mata Fria). Retorna null se não reconhecer o dia.
+const interpretarDiaTurma = (diaTexto) => {
+  const normalizado = normalizarTexto(diaTexto);
+  const encontrado = DIAS_SEMANA_CHAVES.find(d => normalizado.includes(d.chave));
+  if (!encontrado) return null;
+  return {
+    diaSemana: encontrado.indice,
+    quinzenal: normalizado.includes('quinzenal'),
+    semanaB: normalizado.includes('semanab')
+  };
+};
+
+// Converte um "yyyy-mm-dd" em Date à meia-noite NO HORÁRIO LOCAL (evita o problema
+// clássico de "new Date('2026-09-17')" cair um dia antes por causa de UTC).
+const paraDataLocal = (isoTexto) => {
+  if (!isoTexto) return null;
+  const partes = isoTexto.split('-').map(Number);
+  const [ano, mes, dia] = partes;
+  if (!ano || !mes || !dia) return null;
+  return new Date(ano, mes - 1, dia);
+};
+
+const paraISO = (data) => {
+  const ano = data.getFullYear();
+  const mes = String(data.getMonth() + 1).padStart(2, '0');
+  const dia = String(data.getDate()).padStart(2, '0');
+  return `${ano}-${mes}-${dia}`;
+};
+
+// Soma "meses" a uma data (usado só pra calcular o limite de 5 meses do calendário).
+const somarMeses = (data, meses) => new Date(data.getFullYear(), data.getMonth() + meses, data.getDate());
+
+// Gera a lista de datas (yyyy-mm-dd) em que uma turma tem aula, a partir da data de
+// início das aulas do polo (campo "dataInicioAulas", definido na aba Horários),
+// respeitando dia da semana / quinzenal / Semana A-B, e limitada a no máximo 5
+// meses de calendário — pedido explícito do admin, pra não gerar datas pra sempre.
+const gerarDatasDaTurma = (turma, dataInicioIso) => {
+  const inicio = paraDataLocal(dataInicioIso);
+  if (!inicio) return [];
+  const interpretado = interpretarDiaTurma(turma?.dia);
+  if (!interpretado) return [];
+
+  const limite = somarMeses(inicio, 5);
+
+  // Primeiro dia (a partir do início) que cai no dia da semana certo.
+  const primeiraOcorrencia = new Date(inicio);
+  while (primeiraOcorrencia.getDay() !== interpretado.diaSemana) {
+    primeiraOcorrencia.setDate(primeiraOcorrencia.getDate() + 1);
+  }
+
+  let passoDias = 7;
+  let primeira = primeiraOcorrencia;
+  if (interpretado.quinzenal) {
+    passoDias = 14;
+    if (interpretado.semanaB) {
+      primeira = new Date(primeiraOcorrencia);
+      primeira.setDate(primeira.getDate() + 7);
+    }
+  }
+
+  const datas = [];
+  const atual = new Date(primeira);
+  while (atual <= limite) {
+    datas.push(paraISO(atual));
+    atual.setDate(atual.getDate() + passoDias);
+  }
+  return datas;
+};
+
+// yyyy-mm-dd -> dd/mm/yyyy (mais os dois pontos do dia da semana), pra exibir no
+// seletor de data da Pauta.
+const formatarDataCalendario = (isoTexto) => {
+  const data = paraDataLocal(isoTexto);
+  if (!data) return isoTexto;
+  const diasSemanaNomes = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  return `${diasSemanaNomes[data.getDay()]}, ${data.toLocaleDateString('pt-BR')}`;
+};
+
 const INSTRUMENTOS = [
   { id: 'violao', nome: 'Turma de Violão', Icone: Guitar },
   { id: 'bateria', nome: 'Turma de Bateria', Icone: Music }
@@ -104,20 +198,6 @@ const GRADE_PADRAO = [
   { local: 'chale', instrumento: 'violao', dia: 'Domingo (Quinzenal)', horarios: HORARIOS_CHALE }
 ];
 
-// Materiais de estudo — placeholder até haver arquivos reais vinculados
-const MATERIAIS = {
-  violao: [
-    { titulo: 'Acordes Básicos C, D, G', tipo: 'PDF' },
-    { titulo: 'Exercício de Dedilhado 1', tipo: 'Vídeo' },
-    { titulo: 'Escala Maior - Shape 1', tipo: 'PDF' }
-  ],
-  bateria: [
-    { titulo: 'Virada Simples 4x4', tipo: 'Vídeo' },
-    { titulo: 'Coordenação Mão/Pé - Exercício 1', tipo: 'PDF' },
-    { titulo: 'Ritmo Básico de Rock', tipo: 'Vídeo' }
-  ]
-};
-
 const firebaseConfig = {
   apiKey: "AIzaSyDmT6qtTaCYAmYpCiZWQMPavmGE9wSmqlo",
   authDomain: "acordes-de-davi.firebaseapp.com",
@@ -144,7 +224,7 @@ export default function App() {
   const [salvandoTurma, setSalvandoTurma] = useState(false);
 
   // --- Gestão de polos (admin) ---
-  const [novoPolo, setNovoPolo] = useState({ nome: '', descricao: '' });
+  const [novoPolo, setNovoPolo] = useState({ nome: '', descricao: '', dataInicioAulas: '' });
   const [erroPolo, setErroPolo] = useState('');
   const [salvandoPolo, setSalvandoPolo] = useState(false);
   const [editandoPolo, setEditandoPolo] = useState(null);
@@ -156,6 +236,19 @@ export default function App() {
   // Área nova, adicionada por cima do que já existia — não muda em nada o
   // funcionamento por aluno (aba Pagamentos / Portal do Aluno continuam iguais).
   const [igrejasCadastradas, setIgrejasCadastradas] = useState([]);
+
+  // Presença por data (aba Pauta), avaliações de desempenho (nota livre por data,
+  // dentro do cadastro do aluno) e materiais/vídeos de estudo (aba Materiais) —
+  // as três coleções novas do Firestore pedidas junto com o Portal do Aluno.
+  const [presencasCadastradas, setPresencasCadastradas] = useState([]);
+  const [avaliacoesCadastradas, setAvaliacoesCadastradas] = useState([]);
+  const [materiaisCadastrados, setMateriaisCadastrados] = useState([]);
+  const [datasSelecionadasPauta, setDatasSelecionadasPauta] = useState({});
+  const [novoMaterial, setNovoMaterial] = useState({ titulo: '', tipo: 'PDF', instrumento: 'todos', link: '' });
+  const [erroMaterial, setErroMaterial] = useState('');
+  const [salvandoMaterial, setSalvandoMaterial] = useState(false);
+  const [novaAvaliacao, setNovaAvaliacao] = useState({ data: '', texto: '' });
+  const [salvandoAvaliacao, setSalvandoAvaliacao] = useState(false);
   const [novaIgreja, setNovaIgreja] = useState({ nome: '', poloId: '', responsavel: '', telefone: '' });
   const [erroIgreja, setErroIgreja] = useState('');
   const [salvandoIgreja, setSalvandoIgreja] = useState(false);
@@ -288,6 +381,28 @@ export default function App() {
       console.error("Erro ao buscar igrejas:", error);
     });
 
+    // Presença marcada por data (aba Pauta). Aluno logado só recebe as próprias
+    // (regra do Firestore filtra por uid), admin recebe todas.
+    const unsubPresencas = onSnapshot(collection(db, 'presencas'), (snapshot) => {
+      setPresencasCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.error("Erro ao buscar presenças:", error);
+    });
+
+    // Avaliações de desempenho (nota livre por data). Mesma regra de acesso das presenças.
+    const unsubAvaliacoes = onSnapshot(collection(db, 'avaliacoes'), (snapshot) => {
+      setAvaliacoesCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.error("Erro ao buscar avaliações:", error);
+    });
+
+    // Materiais/vídeos de estudo — pública pra leitura (qualquer aluno logado vê a lista).
+    const unsubMateriais = onSnapshot(collection(db, 'materiais'), (snapshot) => {
+      setMateriaisCadastrados(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.error("Erro ao buscar materiais:", error);
+    });
+
     return () => {
       unsubAuth();
       unsubscribe();
@@ -295,6 +410,9 @@ export default function App() {
       unsubTurmas();
       unsubPolos();
       unsubIgrejas();
+      unsubPresencas();
+      unsubAvaliacoes();
+      unsubMateriais();
     };
   }, []);
 
@@ -493,8 +611,10 @@ export default function App() {
   // — mas ficou liberado editar aqui direto pra correções rápidas de cadastro.
   const iniciarEdicaoAluno = (item) => {
     setErroEdicaoAluno('');
+    setNovaAvaliacao({ data: '', texto: '' });
     setEditandoAluno({
       id: item.id,
+      uid: item.uid || null,
       nome: item.nome || '',
       telefone: item.telefone || '',
       local: item.local || '',
@@ -567,6 +687,100 @@ export default function App() {
       });
     } catch (err) {
       console.error("Erro ao atualizar presença:", err);
+    }
+  };
+
+  // Marca/desmarca presença de UM aluno em UMA data específica de aula (pauta por
+  // data). Guarda o "uid" do aluno no próprio documento de presença — não dá pra usar
+  // uma regra do Firestore baseada em "resource.data.uid == auth.uid" sem isso, já que
+  // o id do documento (agendamentoId_data) não carrega o uid sozinho.
+  const alternarPresencaData = async (agendamento, dataIso, presenteAtual) => {
+    const idPresenca = `${agendamento.id}_${dataIso}`;
+    try {
+      await setDoc(doc(db, 'presencas', idPresenca), {
+        agendamentoId: agendamento.id,
+        uid: agendamento.uid || null,
+        data: dataIso,
+        presente: !presenteAtual,
+        marcadoEm: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Erro ao marcar presença da data:', err);
+      alert('Erro ao marcar a presença dessa data. Tente novamente.');
+    }
+  };
+
+  // Acha o registro de presença (se algum) de um aluno numa data específica.
+  const presencaNaData = (agendamentoId, dataIso) =>
+    presencasCadastradas.find(p => p.agendamentoId === agendamentoId && p.data === dataIso);
+
+  // --- Avaliações de desempenho (nota livre por data, dentro do cadastro do aluno) ---
+  const adicionarAvaliacao = async (agendamento, dataIso, texto) => {
+    const textoLimpo = (texto || '').trim();
+    if (!textoLimpo) return;
+    setSalvandoAvaliacao(true);
+    try {
+      await addDoc(collection(db, 'avaliacoes'), {
+        agendamentoId: agendamento.id,
+        uid: agendamento.uid || null,
+        data: dataIso || new Date().toISOString().slice(0, 10),
+        texto: textoLimpo,
+        criadoEm: new Date().toISOString()
+      });
+      setNovaAvaliacao({ data: '', texto: '' });
+    } catch (err) {
+      console.error('Erro ao salvar avaliação:', err);
+      alert('Erro ao salvar a avaliação. Tente novamente.');
+    } finally {
+      setSalvandoAvaliacao(false);
+    }
+  };
+
+  const removerAvaliacao = async (id) => {
+    if (!window.confirm('Remover essa avaliação?')) return;
+    try {
+      await deleteDoc(doc(db, 'avaliacoes', id));
+    } catch (err) {
+      console.error('Erro ao remover avaliação:', err);
+      alert('Erro ao remover a avaliação.');
+    }
+  };
+
+  // --- Materiais/vídeos de estudo (aba Materiais) ---
+  const adicionarMaterial = async (e) => {
+    e.preventDefault();
+    setErroMaterial('');
+    const titulo = novoMaterial.titulo.trim();
+    const link = novoMaterial.link.trim();
+    if (!titulo || !link) {
+      setErroMaterial('Preencha o título e o link do material.');
+      return;
+    }
+    setSalvandoMaterial(true);
+    try {
+      await addDoc(collection(db, 'materiais'), {
+        titulo,
+        tipo: novoMaterial.tipo,
+        instrumento: novoMaterial.instrumento,
+        link,
+        criadoEm: new Date().toISOString()
+      });
+      setNovoMaterial({ titulo: '', tipo: 'PDF', instrumento: 'todos', link: '' });
+    } catch (err) {
+      console.error('Erro ao salvar material:', err);
+      setErroMaterial('Erro ao salvar o material. Tente novamente.');
+    } finally {
+      setSalvandoMaterial(false);
+    }
+  };
+
+  const removerMaterial = async (id) => {
+    if (!window.confirm('Remover esse material da lista de todos os alunos?')) return;
+    try {
+      await deleteDoc(doc(db, 'materiais', id));
+    } catch (err) {
+      console.error('Erro ao remover material:', err);
+      alert('Erro ao remover o material.');
     }
   };
 
@@ -1120,9 +1334,10 @@ export default function App() {
       await setDoc(doc(db, 'polos', id), {
         nome,
         descricao: novoPolo.descricao.trim(),
+        dataInicioAulas: novoPolo.dataInicioAulas || '',
         criadoEm: new Date().toISOString()
       });
-      setNovoPolo({ nome: '', descricao: '' });
+      setNovoPolo({ nome: '', descricao: '', dataInicioAulas: '' });
     } catch (err) {
       console.error('Erro ao criar polo:', err);
       setErroPolo('Erro ao salvar o polo. Tente novamente.');
@@ -1131,7 +1346,7 @@ export default function App() {
     }
   };
 
-  const iniciarEdicaoPolo = (polo) => setEditandoPolo({ id: polo.id, nome: polo.nome, descricao: polo.descricao || '' });
+  const iniciarEdicaoPolo = (polo) => setEditandoPolo({ id: polo.id, nome: polo.nome, descricao: polo.descricao || '', dataInicioAulas: polo.dataInicioAulas || '' });
   const cancelarEdicaoPolo = () => setEditandoPolo(null);
 
   // Usa setDoc com merge (em vez de updateDoc) porque um polo padrão pode ainda não
@@ -1143,7 +1358,8 @@ export default function App() {
     try {
       await setDoc(doc(db, 'polos', editandoPolo.id), {
         nome: editandoPolo.nome.trim(),
-        descricao: editandoPolo.descricao.trim()
+        descricao: editandoPolo.descricao.trim(),
+        dataInicioAulas: editandoPolo.dataInicioAulas || ''
       }, { merge: true });
       setEditandoPolo(null);
     } catch (err) {
@@ -1717,6 +1933,12 @@ export default function App() {
                 >
                   <BookOpen className="w-4 h-4" /> Igrejas
                 </button>
+                <button
+                  onClick={() => setAbaAtiva('materiais')}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'materiais' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                >
+                  <Upload className="w-4 h-4" /> Materiais
+                </button>
               </>
             )}
 
@@ -2177,6 +2399,57 @@ export default function App() {
                   <p className="text-[11px] text-slate-400 mt-1">Deixe os dois em branco pra manter o e-mail/senha atuais.</p>
                 </div>
 
+                <div className="pt-3 border-t border-slate-200">
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Avaliação de desempenho (opcional)</label>
+                  <input
+                    type="date"
+                    value={novaAvaliacao.data}
+                    onChange={(e) => setNovaAvaliacao({ ...novaAvaliacao, data: e.target.value })}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm mb-2 focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <textarea
+                    value={novaAvaliacao.texto}
+                    onChange={(e) => setNovaAvaliacao({ ...novaAvaliacao, texto: e.target.value })}
+                    placeholder="Ex: Já toca os acordes G, C e D com troca rápida entre eles..."
+                    rows={2}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={salvandoAvaliacao || !novaAvaliacao.texto.trim()}
+                    onClick={() => adicionarAvaliacao(editandoAluno, novaAvaliacao.data, novaAvaliacao.texto)}
+                    className="mt-2 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                  >
+                    {salvandoAvaliacao ? 'Salvando...' : 'Adicionar avaliação'}
+                  </button>
+
+                  {(() => {
+                    const avaliacoesDoAluno = avaliacoesCadastradas
+                      .filter((a) => a.agendamentoId === editandoAluno.id)
+                      .sort((a, b) => (a.data < b.data ? 1 : -1));
+                    if (avaliacoesDoAluno.length === 0) return null;
+                    return (
+                      <div className="mt-3 space-y-2 max-h-40 overflow-y-auto">
+                        {avaliacoesDoAluno.map((a) => (
+                          <div key={a.id} className="flex items-start justify-between gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100 text-xs">
+                            <div>
+                              <p className="font-semibold text-emerald-700">{formatarDataCalendario(a.data)}</p>
+                              <p className="text-slate-600 whitespace-pre-wrap">{a.texto}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removerAvaliacao(a.id)}
+                              className="text-slate-400 hover:text-red-500 shrink-0 font-bold"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+
                 {erroEdicaoAluno && (
                   <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
                     {erroEdicaoAluno}
@@ -2211,7 +2484,10 @@ export default function App() {
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                 <CheckSquare className="w-6 h-6 text-emerald-600" /> Pauta de Chamada de Alunos
               </h2>
-              <p className="text-xs text-slate-500">Marque a presença dos alunos nas aulas com apenas um clique — separado por polo.</p>
+              <p className="text-xs text-slate-500">
+                Escolha a data da aula — o calendário é gerado sozinho a partir da data de início das aulas de cada
+                polo (aba Horários) — e marque quem esteve presente, separado por polo e por turma.
+              </p>
             </div>
 
             {agendamentos.length === 0 ? (
@@ -2232,6 +2508,16 @@ export default function App() {
                   ));
                   if (alunosDoPolo.length === 0) return null;
 
+                  // Agrupa os alunos do polo por turma (instrumento + dia) — o mesmo
+                  // agrupamento que já existe na grade de horários, só que a partir do
+                  // que ficou salvo no cadastro de cada aluno.
+                  const turmasDoGrupo = new Map();
+                  alunosDoPolo.forEach((item) => {
+                    const chaveTurma = `${item.instrumento}|${item.dia || 'sem-dia'}`;
+                    if (!turmasDoGrupo.has(chaveTurma)) turmasDoGrupo.set(chaveTurma, []);
+                    turmasDoGrupo.get(chaveTurma).push(item);
+                  });
+
                   return (
                     <div key={polo.id}>
                       <h3 className="text-sm font-bold text-emerald-800 uppercase tracking-wide flex items-center gap-2 mb-2 pb-2 border-b border-emerald-100">
@@ -2240,34 +2526,93 @@ export default function App() {
                           ({alunosDoPolo.length} {alunosDoPolo.length === 1 ? 'aluno' : 'alunos'})
                         </span>
                       </h3>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                          <thead>
-                            <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
-                              <th className="p-3">Aluno</th>
-                              <th className="p-3">Instrumento</th>
-                              <th className="p-3 text-center">Presença (Marcar Aula)</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 text-sm">
-                            {alunosDoPolo.map((item) => (
-                              <tr key={item.id} className="hover:bg-slate-50 transition">
-                                <td className="p-3 font-bold text-slate-800">{item.nome}</td>
-                                <td className="p-3 text-xs text-slate-600 capitalize">{item.instrumento}</td>
-                                <td className="p-3 text-center">
-                                  <button
-                                    onClick={() => alternarPresenca(item.id, item.presenca)}
-                                    className={`px-4 py-1.5 rounded-lg text-xs font-bold transition inline-flex items-center gap-1.5 ${item.presenca ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                                  >
-                                    {item.presenca ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                                    {item.presenca ? 'PRESENTE' : 'FALTOU / A MARCAR'}
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+
+                      {!polo.dataInicioAulas ? (
+                        <div className="bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-lg p-3">
+                          {polo.id === '__outros__'
+                            ? 'Esses alunos não estão com um polo válido no cadastro — corrija o polo deles na aba Gestão pra aparecer o calendário de datas aqui.'
+                            : <>Defina a <strong>data de início das aulas</strong> desse polo na aba Horários pra gerar o calendário de datas aqui.</>}
+                        </div>
+                      ) : (
+                        <div className="space-y-5">
+                          {Array.from(turmasDoGrupo.entries()).map(([chaveTurma, alunosDaTurma]) => {
+                            const [instrumentoTurma, diaTurma] = chaveTurma.split('|');
+                            const datas = gerarDatasDaTurma({ dia: diaTurma }, polo.dataInicioAulas);
+                            const chaveEstado = `${polo.id}|${chaveTurma}`;
+                            const hojeIso = paraISO(new Date());
+                            const dataEscolhida = datasSelecionadasPauta[chaveEstado]
+                              || datas.find((d) => d >= hojeIso)
+                              || datas[datas.length - 1]
+                              || '';
+
+                            return (
+                              <div key={chaveTurma} className="border border-slate-200 rounded-lg p-4">
+                                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                                  <div>
+                                    <p className="text-sm font-bold text-slate-700 capitalize">
+                                      {instrumentoTurma} — {diaTurma !== 'sem-dia' ? diaTurma : 'Horário não definido'}
+                                    </p>
+                                    <p className="text-xs text-slate-400">
+                                      {alunosDaTurma.length} {alunosDaTurma.length === 1 ? 'aluno' : 'alunos'}
+                                    </p>
+                                  </div>
+                                  {datas.length > 0 ? (
+                                    <div>
+                                      <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Data da aula</label>
+                                      <select
+                                        value={dataEscolhida}
+                                        onChange={(e) => setDatasSelecionadasPauta({ ...datasSelecionadasPauta, [chaveEstado]: e.target.value })}
+                                        className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                                      >
+                                        {datas.map((d) => (
+                                          <option key={d} value={d}>{formatarDataCalendario(d)}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  ) : (
+                                    <p className="text-xs text-slate-400 italic max-w-xs text-right">
+                                      Não consegui reconhecer o dia da semana dessa turma ("{diaTurma}") — confira o texto do horário na aba Horários.
+                                    </p>
+                                  )}
+                                </div>
+
+                                {dataEscolhida && (
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-left border-collapse">
+                                      <thead>
+                                        <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
+                                          <th className="p-2">Aluno</th>
+                                          <th className="p-2 text-center">Presença em {formatarDataCalendario(dataEscolhida)}</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-100 text-sm">
+                                        {alunosDaTurma.map((item) => {
+                                          const registro = presencaNaData(item.id, dataEscolhida);
+                                          const presente = !!registro?.presente;
+                                          return (
+                                            <tr key={item.id} className="hover:bg-slate-50 transition">
+                                              <td className="p-2 font-bold text-slate-800">{item.nome}</td>
+                                              <td className="p-2 text-center">
+                                                <button
+                                                  onClick={() => alternarPresencaData(item, dataEscolhida, presente)}
+                                                  className={`px-4 py-1.5 rounded-lg text-xs font-bold transition inline-flex items-center gap-1.5 ${presente ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                                >
+                                                  {presente ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                                                  {presente ? 'PRESENTE' : 'FALTOU / A MARCAR'}
+                                                </button>
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -2743,7 +3088,7 @@ export default function App() {
                 </div>
               )}
 
-              <form onSubmit={adicionarPolo} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end bg-slate-50 p-4 rounded-lg border border-slate-200 mb-4">
+              <form onSubmit={adicionarPolo} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end bg-slate-50 p-4 rounded-lg border border-slate-200 mb-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nome do Polo</label>
                   <input
@@ -2765,6 +3110,15 @@ export default function App() {
                   />
                 </div>
                 <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Início das aulas</label>
+                  <input
+                    type="date"
+                    value={novoPolo.dataInicioAulas}
+                    onChange={(e) => setNovoPolo({ ...novoPolo, dataInicioAulas: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
                   <button
                     type="submit"
                     disabled={salvandoPolo}
@@ -2779,7 +3133,7 @@ export default function App() {
                 {LOCALIZACOES.map((polo) => (
                   <div key={polo.id} className="p-3 rounded-lg border border-slate-200 bg-slate-50">
                     {editandoPolo?.id === polo.id ? (
-                      <form onSubmit={salvarEdicaoPolo} className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                      <form onSubmit={salvarEdicaoPolo} className="grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
                         <input
                           type="text"
                           value={editandoPolo.nome}
@@ -2792,6 +3146,15 @@ export default function App() {
                           onChange={(e) => setEditandoPolo({ ...editandoPolo, descricao: e.target.value })}
                           className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
                         />
+                        <div>
+                          <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Início das aulas</label>
+                          <input
+                            type="date"
+                            value={editandoPolo.dataInicioAulas}
+                            onChange={(e) => setEditandoPolo({ ...editandoPolo, dataInicioAulas: e.target.value })}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                          />
+                        </div>
                         <div className="flex gap-2">
                           <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-semibold transition">Salvar</button>
                           <button type="button" onClick={cancelarEdicaoPolo} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-semibold transition">Cancelar</button>
@@ -2804,6 +3167,10 @@ export default function App() {
                           <p className="text-xs text-slate-500">{polo.descricao || 'Sem descrição'}</p>
                           <p className="text-xs text-slate-400 mt-0.5">
                             {turmasCadastradas.filter(t => t.local === polo.id).length} turma(s) cadastrada(s)
+                            {' · '}
+                            {polo.dataInicioAulas
+                              ? `Aulas a partir de ${new Date(`${polo.dataInicioAulas}T00:00:00`).toLocaleDateString('pt-BR')}`
+                              : 'Data de início das aulas não definida (necessária pra Pauta por data)'}
                           </p>
                         </div>
                         <div className="flex gap-2 shrink-0">
@@ -3362,6 +3729,107 @@ export default function App() {
           </div>
         )}
 
+        {abaAtiva === 'materiais' && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 max-w-3xl mx-auto">
+            <h2 className="text-xl font-bold text-slate-800 mb-1 flex items-center gap-2">
+              <Upload className="w-6 h-6 text-emerald-600" /> Materiais e Vídeos de Estudo
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">
+              Cole aqui o link de um material (TeraBox, Google Drive, YouTube, ou qualquer link que abra direto) —
+              ele aparece pro aluno no Portal, filtrado pelo instrumento dele.
+            </p>
+
+            {erroMaterial && (
+              <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{erroMaterial}</span>
+              </div>
+            )}
+
+            <form onSubmit={adicionarMaterial} className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-lg border border-slate-200 mb-6">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Título</label>
+                <input
+                  type="text"
+                  value={novoMaterial.titulo}
+                  onChange={(e) => setNovoMaterial({ ...novoMaterial, titulo: e.target.value })}
+                  placeholder="Ex: Acordes Básicos C, D, G"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Tipo</label>
+                <select
+                  value={novoMaterial.tipo}
+                  onChange={(e) => setNovoMaterial({ ...novoMaterial, tipo: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="PDF">PDF</option>
+                  <option value="Vídeo">Vídeo</option>
+                  <option value="Link">Link</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Instrumento</label>
+                <select
+                  value={novoMaterial.instrumento}
+                  onChange={(e) => setNovoMaterial({ ...novoMaterial, instrumento: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="todos">Violão e Bateria</option>
+                  <option value="violao">Só Violão</option>
+                  <option value="bateria">Só Bateria</option>
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Link</label>
+                <input
+                  type="text"
+                  value={novoMaterial.link}
+                  onChange={(e) => setNovoMaterial({ ...novoMaterial, link: e.target.value })}
+                  placeholder="https://..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <button
+                  type="submit"
+                  disabled={salvandoMaterial}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-sm disabled:opacity-60"
+                >
+                  {salvandoMaterial ? 'Salvando...' : 'Adicionar Material'}
+                </button>
+              </div>
+            </form>
+
+            <div className="space-y-2">
+              {materiaisCadastrados.map((mat) => (
+                <div key={mat.id} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-slate-800 truncate">{mat.titulo}</p>
+                    <p className="text-xs text-slate-500">
+                      {mat.tipo} · {mat.instrumento === 'todos' ? 'Violão e Bateria' : mat.instrumento === 'violao' ? 'Violão' : 'Bateria'}
+                    </p>
+                    <a href={mat.link} target="_blank" rel="noreferrer" className="text-xs text-emerald-600 hover:underline break-all">{mat.link}</a>
+                  </div>
+                  <button
+                    onClick={() => removerMaterial(mat.id)}
+                    className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1 shrink-0"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Remover
+                  </button>
+                </div>
+              ))}
+              {materiaisCadastrados.length === 0 && (
+                <div className="text-center py-8 bg-slate-50 rounded-lg border border-dashed border-slate-300">
+                  <Upload className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                  <p className="text-slate-500 font-medium text-sm">Nenhum material cadastrado ainda.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {abaAtiva === 'novo' && (
           <div className="bg-white p-6 sm:p-8 rounded-xl shadow-sm border border-slate-200 max-w-3xl mx-auto">
             <h2 className="text-xl font-bold text-slate-800 mb-6 pb-4 border-b border-slate-100 flex items-center gap-2">
@@ -3680,6 +4148,7 @@ export default function App() {
                   </button>
                 </div>
               ) : (
+                <>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   <div className="lg:col-span-1 space-y-4">
                     {meusAgendamentos.map((item) => (
@@ -3759,21 +4228,85 @@ export default function App() {
                       <BookOpen className="w-5 h-5 text-emerald-600" /> Material Didático (Prática em Casa)
                     </h3>
                     <div className="space-y-3">
-                      {(MATERIAIS[meusAgendamentos[0]?.instrumento] || []).map((mat, idx) => (
-                        <div key={idx} className="flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-emerald-300 transition">
-                          <div>
-                            <p className="text-sm font-bold text-slate-800">{mat.titulo}</p>
-                            <p className="text-xs text-slate-500 uppercase tracking-wide">{mat.tipo}</p>
-                          </div>
-                          <span className="text-xs font-semibold text-slate-400 border border-slate-200 px-3 py-1.5 rounded-lg">Em breve</span>
-                        </div>
-                      ))}
+                      {materiaisCadastrados
+                        .filter((mat) => mat.instrumento === 'todos' || mat.instrumento === meusAgendamentos[0]?.instrumento)
+                        .map((mat) => (
+                          <a
+                            key={mat.id}
+                            href={mat.link}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 transition"
+                          >
+                            <div>
+                              <p className="text-sm font-bold text-slate-800">{mat.titulo}</p>
+                              <p className="text-xs text-slate-500 uppercase tracking-wide">{mat.tipo}</p>
+                            </div>
+                            <span className="text-xs font-semibold text-emerald-700 border border-emerald-200 bg-white px-3 py-1.5 rounded-lg">Abrir</span>
+                          </a>
+                        ))}
                     </div>
-                    <p className="text-xs text-slate-400 mt-4">
-                      Materiais ainda não vinculados a arquivos reais — placeholder até a coordenação subir o conteúdo.
-                    </p>
+                    {materiaisCadastrados.filter((mat) => mat.instrumento === 'todos' || mat.instrumento === meusAgendamentos[0]?.instrumento).length === 0 && (
+                      <p className="text-xs text-slate-400 mt-4">
+                        Nenhum material disponível ainda — a coordenação ainda vai subir o conteúdo aqui.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="lg:col-span-3 bg-white rounded-xl shadow-sm p-6 border border-slate-200">
+                    <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 border-b border-slate-100 pb-3">
+                      <CheckSquare className="w-5 h-5 text-emerald-600" /> Histórico de Frequência
+                    </h3>
+                    {(() => {
+                      const meusIds = new Set(meusAgendamentos.map((item) => item.id));
+                      const minhasPresencas = presencasCadastradas
+                        .filter((p) => meusIds.has(p.agendamentoId))
+                        .sort((a, b) => (a.data < b.data ? 1 : -1));
+                      if (minhasPresencas.length === 0) {
+                        return <p className="text-xs text-slate-400">Nenhuma chamada registrada ainda.</p>;
+                      }
+                      return (
+                        <div className="space-y-2">
+                          {minhasPresencas.map((p) => (
+                            <div key={p.id} className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50 text-sm">
+                              <span className="text-slate-700 font-medium">{formatarDataCalendario(p.data)}</span>
+                              <span className={`px-3 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 ${p.presente ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                {p.presente ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                                {p.presente ? 'PRESENTE' : 'FALTOU'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="lg:col-span-3 bg-white rounded-xl shadow-sm p-6 border border-slate-200">
+                    <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 border-b border-slate-100 pb-3">
+                      <Award className="w-5 h-5 text-emerald-600" /> Avaliações de Desempenho
+                    </h3>
+                    {(() => {
+                      const meusIds = new Set(meusAgendamentos.map((item) => item.id));
+                      const minhasAvaliacoes = avaliacoesCadastradas
+                        .filter((a) => meusIds.has(a.agendamentoId))
+                        .sort((a, b) => (a.data < b.data ? 1 : -1));
+                      if (minhasAvaliacoes.length === 0) {
+                        return <p className="text-xs text-slate-400">A coordenação ainda não deixou nenhuma avaliação por aqui.</p>;
+                      }
+                      return (
+                        <div className="space-y-3">
+                          {minhasAvaliacoes.map((a) => (
+                            <div key={a.id} className="p-3 rounded-lg border border-slate-200 bg-slate-50">
+                              <p className="text-xs font-semibold text-emerald-700 mb-1">{formatarDataCalendario(a.data)}</p>
+                              <p className="text-sm text-slate-700 whitespace-pre-wrap">{a.texto}</p>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
+                </>
               )}
             </div>
           ) : (
