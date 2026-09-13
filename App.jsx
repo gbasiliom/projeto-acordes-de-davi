@@ -289,6 +289,7 @@ export default function App() {
   // --- Pagamento via Pix da Igreja (uma cobrança única por igreja/polo, gerada
   // pelo admin — separado do Pix por aluno acima, que continua existindo igual) ---
   const [igrejaComPixAberto, setIgrejaComPixAberto] = useState(null); // id da igreja com Pix aberto
+  const [igrejaAlunoExpandido, setIgrejaAlunoExpandido] = useState(null); // id do agendamento com histórico/avaliações abertos no Portal da Igreja
   const [dadosPixIgreja, setDadosPixIgreja] = useState(null);
   const [erroPixIgreja, setErroPixIgreja] = useState('');
   const [gerandoPixIgreja, setGerandoPixIgreja] = useState(false);
@@ -700,6 +701,7 @@ export default function App() {
       await setDoc(doc(db, 'presencas', idPresenca), {
         agendamentoId: agendamento.id,
         uid: agendamento.uid || null,
+        local: agendamento.local || null,
         data: dataIso,
         presente: !presenteAtual,
         marcadoEm: new Date().toISOString()
@@ -723,6 +725,7 @@ export default function App() {
       await addDoc(collection(db, 'avaliacoes'), {
         agendamentoId: agendamento.id,
         uid: agendamento.uid || null,
+        local: agendamento.local || null,
         data: dataIso || new Date().toISOString().slice(0, 10),
         texto: textoLimpo,
         criadoEm: new Date().toISOString()
@@ -4438,7 +4441,7 @@ export default function App() {
                     <Users className="w-5 h-5 text-emerald-600" /> Alunos do seu polo
                   </h3>
                   <p className="text-xs text-slate-500 mb-4">
-                    {meusAlunosIgreja.length} aluno(s) — frequência conforme a última chamada marcada pela coordenação.
+                    {meusAlunosIgreja.length} aluno(s) — clique num aluno pra ver o histórico de frequência e as avaliações de desempenho.
                   </p>
                   {meusAlunosIgreja.length === 0 ? (
                     <p className="text-sm text-slate-400 text-center py-6">Nenhum aluno registrado nesse polo ainda.</p>
@@ -4449,22 +4452,85 @@ export default function App() {
                           <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
                             <th className="p-3">Aluno</th>
                             <th className="p-3">Instrumento</th>
-                            <th className="p-3 text-center">Frequência</th>
+                            <th className="p-3 text-center">Última aula</th>
+                            <th className="p-3 text-center">Detalhes</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-sm">
-                          {meusAlunosIgreja.map((item) => (
-                            <tr key={item.id}>
-                              <td className="p-3 font-bold text-slate-800">{item.nome}</td>
-                              <td className="p-3 text-xs text-slate-600 capitalize">{item.instrumento}</td>
-                              <td className="p-3 text-center">
-                                <span className={`px-3 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 ${item.presenca ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                                  {item.presenca ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
-                                  {item.presenca ? 'PRESENTE' : 'FALTOU / A MARCAR'}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
+                          {meusAlunosIgreja.map((item) => {
+                            const presencasDoAluno = presencasCadastradas
+                              .filter((p) => p.agendamentoId === item.id)
+                              .sort((a, b) => (a.data < b.data ? 1 : -1));
+                            const avaliacoesDoAluno = avaliacoesCadastradas
+                              .filter((a) => a.agendamentoId === item.id)
+                              .sort((a, b) => (a.data < b.data ? 1 : -1));
+                            const ultimaPresenca = presencasDoAluno[0];
+                            const expandido = igrejaAlunoExpandido === item.id;
+                            return (
+                              <React.Fragment key={item.id}>
+                                <tr
+                                  onClick={() => setIgrejaAlunoExpandido(expandido ? null : item.id)}
+                                  className="hover:bg-slate-50 transition cursor-pointer"
+                                >
+                                  <td className="p-3 font-bold text-slate-800">{item.nome}</td>
+                                  <td className="p-3 text-xs text-slate-600 capitalize">{item.instrumento}</td>
+                                  <td className="p-3 text-center">
+                                    {ultimaPresenca ? (
+                                      <span className={`px-3 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 ${ultimaPresenca.presente ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                        {ultimaPresenca.presente ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                                        {formatarDataCalendario(ultimaPresenca.data)}
+                                      </span>
+                                    ) : (
+                                      <span className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-500">Sem chamada ainda</span>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-center text-xs text-emerald-600 font-semibold whitespace-nowrap">
+                                    {expandido ? 'Ocultar ▲' : 'Ver detalhes ▾'}
+                                  </td>
+                                </tr>
+                                {expandido && (
+                                  <tr>
+                                    <td colSpan={4} className="p-4 bg-slate-50">
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div>
+                                          <p className="text-xs font-bold text-slate-600 uppercase mb-2">Histórico de Frequência</p>
+                                          {presencasDoAluno.length === 0 ? (
+                                            <p className="text-xs text-slate-400">Nenhuma chamada registrada ainda.</p>
+                                          ) : (
+                                            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                              {presencasDoAluno.map((p) => (
+                                                <div key={p.id} className="flex items-center justify-between text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+                                                  <span className="text-slate-600">{formatarDataCalendario(p.data)}</span>
+                                                  <span className={`font-bold ${p.presente ? 'text-emerald-700' : 'text-slate-400'}`}>
+                                                    {p.presente ? 'PRESENTE' : 'FALTOU'}
+                                                  </span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                        <div>
+                                          <p className="text-xs font-bold text-slate-600 uppercase mb-2">Avaliações de Desempenho</p>
+                                          {avaliacoesDoAluno.length === 0 ? (
+                                            <p className="text-xs text-slate-400">Nenhuma avaliação registrada ainda.</p>
+                                          ) : (
+                                            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                              {avaliacoesDoAluno.map((a) => (
+                                                <div key={a.id} className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+                                                  <p className="text-[11px] font-bold text-emerald-700">{formatarDataCalendario(a.data)}</p>
+                                                  <p className="text-xs text-slate-600 whitespace-pre-wrap">{a.texto}</p>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
