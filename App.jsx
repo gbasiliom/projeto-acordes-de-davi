@@ -1448,6 +1448,12 @@ export default function App() {
   // devolve só os grupos com mais de um registro — candidatos a cadastro duplicado.
   // Só compara quando os dois campos existem, pra não arriscar juntar duas pessoas
   // diferentes que só têm o nome parecido e nenhum telefone cadastrado.
+  //
+  // Um grupo some do aviso quando TODOS os registros dele já foram aprovados (campo
+  // duplicadoAprovado) — é o "aval" de que não é duplicado de verdade, e sim o mesmo
+  // aluno com 2 aulas por semana em dias diferentes. Se aparecer um 3º registro novo
+  // desse mesmo aluno depois, o grupo volta a aparecer (porque nem todos estão
+  // aprovados ainda) — é só clicar em aprovar de novo que ele inclui o novo também.
   const gruposDuplicados = useMemo(() => {
     const mapa = new Map();
     agendamentos.forEach(item => {
@@ -1458,8 +1464,21 @@ export default function App() {
       if (!mapa.has(chave)) mapa.set(chave, []);
       mapa.get(chave).push(item);
     });
-    return Array.from(mapa.values()).filter(grupo => grupo.length > 1);
+    return Array.from(mapa.values()).filter(grupo => grupo.length > 1 && !grupo.every(item => item.duplicadoAprovado));
   }, [agendamentos]);
+
+  // "Aval" do admin: marca esse grupo como aulas diferentes de propósito (não duplicado),
+  // sem excluir nenhum registro — só some o aviso da lista.
+  const aprovarGrupoDuplicado = async (grupo) => {
+    try {
+      await Promise.all(
+        grupo.map(item => updateDoc(doc(db, 'agendamentos', item.id), { duplicadoAprovado: true }))
+      );
+    } catch (err) {
+      console.error('Erro ao aprovar grupo como não-duplicado:', err);
+      alert('Erro ao salvar essa aprovação. Tente novamente.');
+    }
+  };
 
   // Instrumentos que realmente têm turma cadastrada no polo escolhido (grade vem do Firestore agora)
   const instrumentosDoPolo = INSTRUMENTOS.filter(inst =>
@@ -1949,11 +1968,21 @@ export default function App() {
                     {gruposDuplicados.length} possível{gruposDuplicados.length > 1 ? 'is' : ''} cadastro{gruposDuplicados.length > 1 ? 's' : ''} duplicado{gruposDuplicados.length > 1 ? 's' : ''} (mesmo nome + telefone)
                   </h3>
                 </div>
-                <p className="text-xs text-red-700 -mt-2">Revise cada grupo e exclua o(s) registro(s) que não devem ficar. Nada é apagado automaticamente.</p>
+                <p className="text-xs text-red-700 -mt-2">
+                  Revise cada grupo: se for engano, exclua o registro que não devia ficar. Se for de propósito — o mesmo aluno com 2 aulas por semana em dias diferentes — clique em "Não é duplicado" pra tirar o aviso sem excluir nada.
+                </p>
                 <div className="space-y-3">
                   {gruposDuplicados.map((grupo, i) => (
                     <div key={i} className="bg-white border border-red-200 rounded-lg p-3">
-                      <p className="text-xs font-bold text-slate-700 mb-2">{grupo[0].nome} · {grupo[0].telefone}</p>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <p className="text-xs font-bold text-slate-700">{grupo[0].nome} · {grupo[0].telefone}</p>
+                        <button
+                          onClick={() => aprovarGrupoDuplicado(grupo)}
+                          className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded text-xs font-medium transition inline-flex items-center gap-1 shrink-0"
+                        >
+                          <CheckCircle className="w-3 h-3" /> Não é duplicado (aulas diferentes)
+                        </button>
+                      </div>
                       <div className="space-y-1.5">
                         {grupo.map(item => (
                           <div key={item.id} className="flex items-center justify-between gap-3 text-xs bg-slate-50 border border-slate-200 rounded p-2">
