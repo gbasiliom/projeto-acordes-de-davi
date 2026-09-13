@@ -2016,93 +2016,20 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
-                  {agendamentosFiltrados.map((item) => {
-                    const emEdicao = editandoAluno?.id === item.id;
-                    return (
-                    <React.Fragment key={item.id}>
-                    <tr className="hover:bg-slate-50 transition">
+                  {agendamentosFiltrados.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-50 transition">
                       <td className="p-3">
-                        {emEdicao ? (
-                          <form id={`editar-aluno-${item.id}`} onSubmit={salvarEdicaoAluno} className="flex flex-col gap-1.5">
-                            <input
-                              type="text"
-                              value={editandoAluno.nome}
-                              onChange={(e) => setEditandoAluno({ ...editandoAluno, nome: e.target.value })}
-                              placeholder="Nome"
-                              autoFocus
-                              className="w-full px-2 py-1 border border-slate-300 rounded-lg text-sm font-bold focus:ring-2 focus:ring-emerald-500"
-                            />
-                            <input
-                              type="text"
-                              value={editandoAluno.telefone}
-                              onChange={(e) => setEditandoAluno({ ...editandoAluno, telefone: e.target.value })}
-                              placeholder="Telefone"
-                              className="w-full px-2 py-1 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500"
-                            />
-                            <div className="pt-1.5 mt-0.5 border-t border-slate-200">
-                              <label className="block text-[10px] font-semibold text-slate-400 uppercase mb-1">Corrigir login (opcional)</label>
-                              <input
-                                type="email"
-                                value={editandoAluno.novoEmail}
-                                onChange={(e) => setEditandoAluno({ ...editandoAluno, novoEmail: e.target.value })}
-                                placeholder="Novo e-mail de login"
-                                className="w-full px-2 py-1 border border-slate-300 rounded-lg text-xs mb-1 focus:ring-2 focus:ring-emerald-500"
-                              />
-                              <input
-                                type="text"
-                                value={editandoAluno.novaSenha}
-                                onChange={(e) => setEditandoAluno({ ...editandoAluno, novaSenha: e.target.value })}
-                                placeholder="Nova senha (6+ caracteres)"
-                                className="w-full px-2 py-1 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500"
-                              />
-                              <p className="text-[10px] text-slate-400 mt-0.5">Deixe em branco pra manter o e-mail/senha atuais.</p>
-                            </div>
-                          </form>
-                        ) : (
-                          <>
-                            <div className="font-bold text-slate-800">{item.nome}</div>
-                            <div className="text-xs text-slate-500">{item.telefone || 'Sem telefone'}</div>
-                          </>
-                        )}
+                        <div className="font-bold text-slate-800">{item.nome}</div>
+                        <div className="text-xs text-slate-500">{item.telefone || 'Sem telefone'}</div>
                       </td>
                       <td className="p-3">
-                        {emEdicao ? (
-                          <div className="flex flex-col gap-1.5">
-                            <select
-                              form={`editar-aluno-${item.id}`}
-                              value={editandoAluno.local}
-                              onChange={(e) => setEditandoAluno({ ...editandoAluno, local: e.target.value })}
-                              className="w-full px-2 py-1 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
-                            >
-                              {LOCALIZACOES.map((polo) => (
-                                <option key={polo.id} value={polo.id}>{polo.nome}</option>
-                              ))}
-                            </select>
-                            <select
-                              form={`editar-aluno-${item.id}`}
-                              value={editandoAluno.instrumento}
-                              onChange={(e) => setEditandoAluno({ ...editandoAluno, instrumento: e.target.value })}
-                              className="w-full px-2 py-1 border border-slate-300 rounded-lg text-xs bg-white capitalize focus:ring-2 focus:ring-emerald-500"
-                            >
-                              <option value="violao">Violão</option>
-                              <option value="bateria">Bateria</option>
-                            </select>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="text-xs font-semibold uppercase text-emerald-700">
-                              {LOCALIZACOES.find(l => l.id === item.local)?.nome}
-                            </div>
-                            <div className="text-xs capitalize text-slate-500">{item.instrumento}</div>
-                          </>
-                        )}
+                        <div className="text-xs font-semibold uppercase text-emerald-700">
+                          {LOCALIZACOES.find(l => l.id === item.local)?.nome}
+                        </div>
+                        <div className="text-xs capitalize text-slate-500">{item.instrumento}</div>
                       </td>
                       <td className="p-3 text-xs text-slate-600">
-                        {emEdicao ? (
-                          <span className="text-[10px] text-amber-600 italic">Horário não muda aqui</span>
-                        ) : (
-                          formatarHorario(item)
-                        )}
+                        {formatarHorario(item)}
                       </td>
                       <td className="p-3">
                         <span className={`text-xs px-2 py-1 rounded font-medium uppercase ${item.pago ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
@@ -2110,57 +2037,141 @@ export default function App() {
                         </span>
                       </td>
                       <td className="p-3 text-right">
-                        {emEdicao ? (
-                          <div className="flex justify-end gap-2">
-                            <button
-                              type="submit"
-                              form={`editar-aluno-${item.id}`}
-                              disabled={salvandoEdicaoAluno}
-                              className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition"
-                            >
-                              {salvandoEdicaoAluno ? 'Salvando...' : 'Salvar'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={cancelarEdicaoAluno}
-                              disabled={salvandoEdicaoAluno}
-                              className="bg-slate-200 hover:bg-slate-300 disabled:opacity-60 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
-                            >
-                              Cancelar
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex justify-end gap-2">
-                            <button
-                              onClick={() => iniciarEdicaoAluno(item)}
-                              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
-                            >
-                              <Pencil className="w-3.5 h-3.5" /> Editar
-                            </button>
-                            <button
-                              onClick={() => excluirAgendamento(item.id)}
-                              className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" /> Excluir
-                            </button>
-                          </div>
-                        )}
+                        <div className="flex justify-end gap-2">
+                          <button
+                            onClick={() => iniciarEdicaoAluno(item)}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                          >
+                            <Pencil className="w-3.5 h-3.5" /> Editar
+                          </button>
+                          <button
+                            onClick={() => excluirAgendamento(item.id)}
+                            className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Excluir
+                          </button>
+                        </div>
                       </td>
                     </tr>
-                    {emEdicao && erroEdicaoAluno && (
-                      <tr>
-                        <td colSpan={5} className="p-0">
-                          <div className="bg-red-50 border-t border-red-200 text-red-700 text-xs px-3 py-2">
-                            {erroEdicaoAluno}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    </React.Fragment>
-                    );
-                  })}
+                  ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* Janela de alterações de cadastro do aluno — fica fora da tabela de propósito
+            (renderizada uma vez só, no nível geral da tela), pra não depender de inputs
+            espalhados em várias células da tabela junto com uma lista que atualiza em
+            tempo real. Abre por cima de qualquer aba, sempre que "editandoAluno" existir. */}
+        {editandoAluno && (
+          <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+              <form onSubmit={salvarEdicaoAluno} className="p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <Pencil className="w-5 h-5 text-emerald-600" /> Alterar cadastro
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={cancelarEdicaoAluno}
+                    className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nome</label>
+                  <input
+                    type="text"
+                    value={editandoAluno.nome}
+                    onChange={(e) => setEditandoAluno({ ...editandoAluno, nome: e.target.value })}
+                    autoFocus
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Telefone</label>
+                  <input
+                    type="text"
+                    value={editandoAluno.telefone}
+                    onChange={(e) => setEditandoAluno({ ...editandoAluno, telefone: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Polo</label>
+                    <select
+                      value={editandoAluno.local}
+                      onChange={(e) => setEditandoAluno({ ...editandoAluno, local: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                    >
+                      {LOCALIZACOES.map((polo) => (
+                        <option key={polo.id} value={polo.id}>{polo.nome}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Instrumento</label>
+                    <select
+                      value={editandoAluno.instrumento}
+                      onChange={(e) => setEditandoAluno({ ...editandoAluno, instrumento: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white capitalize focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="violao">Violão</option>
+                      <option value="bateria">Bateria</option>
+                    </select>
+                  </div>
+                </div>
+                <p className="text-[11px] text-amber-600 -mt-2">Trocar polo/instrumento aqui não muda o horário já reservado.</p>
+
+                <div className="pt-3 border-t border-slate-200">
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Corrigir login (opcional)</label>
+                  <input
+                    type="email"
+                    value={editandoAluno.novoEmail}
+                    onChange={(e) => setEditandoAluno({ ...editandoAluno, novoEmail: e.target.value })}
+                    placeholder="Novo e-mail de login"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm mb-2 focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <input
+                    type="text"
+                    value={editandoAluno.novaSenha}
+                    onChange={(e) => setEditandoAluno({ ...editandoAluno, novaSenha: e.target.value })}
+                    placeholder="Nova senha (6+ caracteres)"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">Deixe os dois em branco pra manter o e-mail/senha atuais.</p>
+                </div>
+
+                {erroEdicaoAluno && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
+                    {erroEdicaoAluno}
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="submit"
+                    disabled={salvandoEdicaoAluno}
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-bold transition"
+                  >
+                    {salvandoEdicaoAluno ? 'Salvando...' : 'Salvar alterações'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelarEdicaoAluno}
+                    disabled={salvandoEdicaoAluno}
+                    className="bg-slate-200 hover:bg-slate-300 disabled:opacity-60 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}
