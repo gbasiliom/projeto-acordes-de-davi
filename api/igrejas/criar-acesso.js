@@ -74,21 +74,22 @@ module.exports = async (req, res) => {
       if (errCriar.code === 'auth/email-already-exists') {
         const existente = await authAdmin.getUserByEmail(email);
 
-        // Se esse e-mail já é o desta MESMA igreja, é só redefinição de senha —
-        // segue direto. Se pertence a outra conta (admin, aluno ou outra igreja),
-        // recusa: não queremos mexer numa conta que não é dessa igreja.
+        // Se esse e-mail já é o desta MESMA igreja, é só redefinição de senha — segue
+        // direto. Se pertence a outra conta, só recusa quando for a conta do admin ou
+        // de um ALUNO (misturar login de igreja com login de aluno não faz sentido).
+        // Repetir o e-mail de OUTRA igreja é permitido de propósito — o clique em
+        // "Criar/Redefinir acesso" sempre reescreve os "custom claims" da conta pro
+        // polo desta igreja aqui, então esse mesmo login passa a enxergar o polo mais
+        // recente pro qual foi definido (os polos não ficam somados/juntos — é sempre
+        // "o último que você configurou" pra esse e-mail).
         if (existente.uid !== igreja.uid) {
           if (email === ADMIN_EMAIL) {
             res.status(409).json({ erro: 'Esse e-mail é o e-mail da coordenação (admin) — use outro e-mail pra essa igreja.' });
             return;
           }
-          const [outraIgrejaSnap, alunoSnap] = await Promise.all([
-            db.collection('igrejas').where('uid', '==', existente.uid).limit(1).get(),
-            db.collection('agendamentos').where('uid', '==', existente.uid).limit(1).get()
-          ]);
-          const pertenceOutraIgreja = !outraIgrejaSnap.empty && outraIgrejaSnap.docs[0].id !== igrejaId;
-          if (pertenceOutraIgreja || !alunoSnap.empty) {
-            res.status(409).json({ erro: 'Esse e-mail já está em uso por outra conta (aluno ou outra igreja). Use um e-mail diferente pra essa igreja.' });
+          const alunoSnap = await db.collection('agendamentos').where('uid', '==', existente.uid).limit(1).get();
+          if (!alunoSnap.empty) {
+            res.status(409).json({ erro: 'Esse e-mail já está em uso por um cadastro de aluno. Use um e-mail diferente pra essa igreja.' });
             return;
           }
         }
