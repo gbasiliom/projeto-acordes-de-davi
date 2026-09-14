@@ -14,7 +14,13 @@ const ADMIN_EMAIL = 'auladeinstrumentosmusicais2026@gmail.com';
 const POLOS_PADRAO = [
   { id: 'saoluiz', nome: 'São Luiz', descricao: 'Aulas quinzenais — Violão às sextas, Bateria aos sábados.' },
   { id: 'matafria', nome: 'Mata Fria / Penha do Côco', descricao: 'Bateria pela manhã e Violão à tarde, conforme a agenda de São Luiz.' },
-  { id: 'chale', nome: 'Chalé', descricao: 'Aulas de Violão aos domingos (quinzenal).' }
+  { id: 'chale', nome: 'Chalé', descricao: 'Aulas de Violão aos domingos (quinzenal).' },
+  // Igreja Tabernáculo, na localidade de Penha do Côco — um polo totalmente separado
+  // de "Mata Fria / Penha do Côco" (não tem nada a ver com ele, mesmo os nomes
+  // parecendo iguais; "Pé do Coco" era escrita errada, o nome certo é "Penha do Côco").
+  { id: 'penhadococo', nome: 'Igreja Tabernáculo (Penha do Côco)', descricao: 'Igreja Tabernáculo — pacote fechado mensal.' },
+  // Vem do "Planejamento Financeiro das Aulas de Música por Polo" (Google Docs).
+  { id: 'agualimpa', nome: 'Água Limpa', descricao: 'Igreja Assembleia de Deus — pacote fechado mensal.' }
 ];
 
 // Reduz um texto a só letras/números minúsculos, sem espaço/acento/pontuação
@@ -194,22 +200,44 @@ const INSTRUMENTOS = [
 // se um instrumento novo for adicionado no futuro.
 const nomeInstrumento = (id) => INSTRUMENTOS.find(i => i.id === id)?.nome.replace('Turma de ', '') || id || '';
 
-// Valores fixos usados como SUGESTÃO automática ao gerar um recibo — o campo de valor
-// no recibo sempre fica editável, então isso nunca trava um caso fora da regra.
-// Pacote é por polo (chave = id do polo); polo pacote que não está no mapa (ex: um polo
-// novo criado pela tela, ou o Tabernáculo/Penha do Côco) cai no valor padrão de pacote.
+// Valores fixos usados como SUGESTÃO automática ao gerar um recibo (ou no botão "usar
+// sugestão" da aba Pagamentos) — o campo de valor sempre fica editável, então isso nunca
+// trava um caso fora da regra. Cada polo tem os DOIS valores disponíveis (pacote fechado
+// E valor por aula individual), porque alunos de um polo que hoje paga em pacote podem
+// passar a pagar individualmente (e vice-versa) — o "Tipo" de cada aluno, na aba
+// Pagamentos, decide qual dos dois valores é sugerido.
+// Fonte: "Planejamento Financeiro das Aulas de Música por Polo" (Google Docs).
+
+// Pacote fechado mensal por polo (chave = id do polo) — hoje só Água Limpa e Penha do
+// Côco (Igreja Tabernáculo) têm esse modelo confirmado no planejamento; os outros (São
+// Luís, Chalé) ficam com uma estimativa antiga só pra caso algum aluno deles vire pacote.
 const VALOR_PACOTE_POR_POLO = {
+  agualimpa: 400,     // Água Limpa (Igreja Assembleia de Deus)
+  penhadococo: 350,   // Penha do Côco (Igreja Tabernáculo)
   saoluiz: 600,
   chale: 500
 };
-const VALOR_PACOTE_PADRAO_OUTROS = 300; // ex: Tabernáculo / Penha do Côco
-const VALOR_AULA_INDIVIDUAL = 25;
+// Polo pacote que não está no mapa acima (ex: um polo novo criado pela tela) cai aqui.
+const VALOR_PACOTE_PADRAO_OUTROS = 300;
 
-// Sugere o valor do recibo: individual = valor da aula x quantidade de aulas;
+// Valor por aula, pra quando o aluno paga individualmente (fora do pacote da igreja).
+// São Luís, Chalé e Mata Fria vêm direto do planejamento; Chalé varia de R$35 a R$40 no
+// documento — usando o valor mais baixo aqui (sempre editável na hora, se for outro).
+const VALOR_AULA_POR_POLO = {
+  saoluiz: 50,  // R$30 aula-base + R$20 deslocamento/alimentação (36km cada trecho)
+  chale: 35,    // varia R$35–40 no planejamento
+  matafria: 30  // sem custo de deslocamento — professor mora na comunidade
+};
+// Polo individual que não está no mapa acima (ex: Água Limpa/Penha do Côco, que hoje só
+// têm valor de pacote definido — ou um polo novo criado pela tela) cai aqui.
+const VALOR_AULA_INDIVIDUAL_PADRAO = 25;
+
+// Sugere o valor do recibo: individual = valor da aula (por polo) x quantidade de aulas;
 // pacote = valor fechado do polo (com fallback pro valor padrão de outros polos).
 const valorSugeridoRecibo = (item, polo, quantidadeAulas = 1) => {
   if (item?.tipoPagamento === 'individual') {
-    return VALOR_AULA_INDIVIDUAL * quantidadeAulas;
+    const valorAula = (polo && VALOR_AULA_POR_POLO[polo.id] != null) ? VALOR_AULA_POR_POLO[polo.id] : VALOR_AULA_INDIVIDUAL_PADRAO;
+    return valorAula * quantidadeAulas;
   }
   if (polo && VALOR_PACOTE_POR_POLO[polo.id] != null) {
     return VALOR_PACOTE_POR_POLO[polo.id];
@@ -713,8 +741,8 @@ export default function App() {
           uid,
           presenca: false,
           // Mata Fria/Penha do Côco é cobrado por aula individual; os demais polos
-          // (São Luiz, Chalé, Tabernáculo, e qualquer polo novo) começam como pacote —
-          // o admin ajusta exceção por exceção na aba Pagamentos se precisar.
+          // (São Luiz, Chalé, Água Limpa, Igreja Tabernáculo, e qualquer polo novo)
+          // começam como pacote — o admin ajusta exceção por exceção na aba Pagamentos.
           tipoPagamento: poloSelecionado === 'matafria' ? 'individual' : 'pacote',
           formaPagamento: 'pix',
           dataPagamento: '',
@@ -1496,12 +1524,14 @@ export default function App() {
       .map(def => {
         const salvo = polosCadastrados.find(p => p.id === def.id);
         if (salvo?.removido) return null;
-        return salvo ? { id: def.id, nome: salvo.nome ?? def.nome, descricao: salvo.descricao ?? def.descricao } : def;
+        return salvo
+          ? { id: def.id, nome: salvo.nome ?? def.nome, descricao: salvo.descricao ?? def.descricao, dataInicioAulas: salvo.dataInicioAulas ?? def.dataInicioAulas ?? '' }
+          : { ...def, dataInicioAulas: def.dataInicioAulas ?? '' };
       })
       .filter(Boolean),
     ...polosCadastrados
       .filter(p => !idsPadrao.has(p.id) && !p.removido)
-      .map(p => ({ id: p.id, nome: p.nome, descricao: p.descricao }))
+      .map(p => ({ id: p.id, nome: p.nome, descricao: p.descricao, dataInicioAulas: p.dataInicioAulas ?? '' }))
   ];
 
   // Cria um novo polo (local de ensino) — só o admin consegue (regra do Firestore).
@@ -3246,7 +3276,7 @@ export default function App() {
                         onChange={(e) => {
                           const qtd = Math.max(1, Number(e.target.value) || 1);
                           setQuantidadeAulasRecibo(qtd);
-                          setValorRecibo(String(VALOR_AULA_INDIVIDUAL * qtd));
+                          setValorRecibo(String(valorSugeridoRecibo(itemRecibo, LOCALIZACOES.find(l => l.id === itemRecibo.local), qtd)));
                         }}
                         className="w-20 px-2 py-1.5 border border-slate-300 rounded-lg text-sm text-center"
                       />
@@ -3896,7 +3926,7 @@ export default function App() {
                     type="text"
                     value={novaIgreja.nome}
                     onChange={(e) => setNovaIgreja({ ...novaIgreja, nome: e.target.value })}
-                    placeholder="Ex: Igreja Tabernáculo - Penha do Côco"
+                    placeholder="Ex: Igreja Tabernáculo (Penha do Côco)"
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
