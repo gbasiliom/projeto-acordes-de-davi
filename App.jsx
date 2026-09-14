@@ -256,6 +256,15 @@ export default function App() {
   const [salvandoMaterial, setSalvandoMaterial] = useState(false);
   const [novaAvaliacao, setNovaAvaliacao] = useState({ data: '', texto: '' });
   const [salvandoAvaliacao, setSalvandoAvaliacao] = useState(false);
+
+  // --- Cadastro do proprietário/emissor (aba Configurações) — nome, CPF e endereço
+  // que passam a aparecer no recibo de pagamento, pra você poder usar o recibo pra
+  // controle fiscal. Fica salvo num único documento no Firestore
+  // (configuracoes/proprietario) e é editável só por você, na aba Configurações.
+  const [dadosProprietario, setDadosProprietario] = useState({ nome: '', cpf: '', endereco: '' });
+  const [formProprietario, setFormProprietario] = useState({ nome: '', cpf: '', endereco: '' });
+  const [salvandoProprietario, setSalvandoProprietario] = useState(false);
+  const [mensagemProprietario, setMensagemProprietario] = useState('');
   const [novaIgreja, setNovaIgreja] = useState({ nome: '', poloId: '', responsavel: '', telefone: '' });
   const [erroIgreja, setErroIgreja] = useState('');
   const [salvandoIgreja, setSalvandoIgreja] = useState(false);
@@ -411,6 +420,17 @@ export default function App() {
       console.error("Erro ao buscar materiais:", error);
     });
 
+    // Dados do proprietário/emissor (nome, CPF, endereço) que aparecem no recibo —
+    // documento único, precisa de login (qualquer papel) pra ler, só o admin edita.
+    const unsubProprietario = onSnapshot(doc(db, 'configuracoes', 'proprietario'), (snap) => {
+      if (snap.exists()) {
+        const dados = snap.data();
+        setDadosProprietario({ nome: dados.nome || '', cpf: dados.cpf || '', endereco: dados.endereco || '' });
+      }
+    }, (error) => {
+      console.error("Erro ao buscar dados do proprietário:", error);
+    });
+
     return () => {
       unsubAuth();
       unsubscribe();
@@ -421,6 +441,7 @@ export default function App() {
       unsubPresencas();
       unsubAvaliacoes();
       unsubMateriais();
+      unsubProprietario();
     };
   }, []);
 
@@ -896,6 +917,29 @@ export default function App() {
       dataPagamento: igreja.dataPagamento,
       valorCombinado: igreja.valorCombinado
     });
+  };
+
+  // Salva o cadastro do proprietário/emissor (aba Configurações) — nome, CPF e
+  // endereço que passam a aparecer no recibo, pra você poder usar ele pra
+  // controle fiscal. Um único documento, sobrescrito toda vez que você salva.
+  const salvarProprietario = async (e) => {
+    e.preventDefault();
+    setSalvandoProprietario(true);
+    setMensagemProprietario('');
+    try {
+      await setDoc(doc(db, 'configuracoes', 'proprietario'), {
+        nome: formProprietario.nome.trim(),
+        cpf: formProprietario.cpf.trim(),
+        endereco: formProprietario.endereco.trim()
+      });
+      setMensagemProprietario('Dados salvos! Já aparecem nos próximos recibos gerados.');
+      setTimeout(() => setMensagemProprietario(''), 4000);
+    } catch (err) {
+      console.error('Erro ao salvar dados do proprietário:', err);
+      setMensagemProprietario('Erro ao salvar. Tente novamente em instantes.');
+    } finally {
+      setSalvandoProprietario(false);
+    }
   };
 
   // Valor combinado é o que vira a cobrança via Pix online (botão "Pagar com Pix" no
@@ -1793,6 +1837,16 @@ export default function App() {
     }
   }, [igrejasCadastradas, igrejaComPixAberto]);
 
+  // Assim que os dados do proprietário chegarem do Firestore, preenche o formulário
+  // da aba Configurações com eles (pra você ver o que já está salvo ao abrir a aba).
+  useEffect(() => {
+    setFormProprietario({
+      nome: dadosProprietario.nome,
+      cpf: dadosProprietario.cpf,
+      endereco: dadosProprietario.endereco
+    });
+  }, [dadosProprietario.nome, dadosProprietario.cpf, dadosProprietario.endereco]);
+
   // Card de pagamento de UM aluno — usado tanto pros alunos individuais quanto pros
   // alunos em pacote na aba Pagamentos, pra mostrar sempre os mesmos campos (tipo,
   // forma, data, valor combinado e status) nos dois casos, com o mesmo visual.
@@ -1957,6 +2011,12 @@ export default function App() {
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'materiais' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
                 >
                   <Upload className="w-4 h-4" /> Materiais
+                </button>
+                <button
+                  onClick={() => setAbaAtiva('configuracoes')}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'configuracoes' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                >
+                  <Settings className="w-4 h-4" /> Configurações
                 </button>
               </>
             )}
@@ -2964,6 +3024,14 @@ export default function App() {
                     </div>
                   )}
 
+                  {dadosProprietario.nome && (
+                    <div className="text-left max-w-xl mx-auto mb-2 text-[11px] text-slate-600 leading-relaxed">
+                      <p className="font-semibold text-slate-700 uppercase tracking-wide text-[10px] mb-0.5">Emitido por</p>
+                      <p>{dadosProprietario.nome}{dadosProprietario.cpf ? ` — CPF/CNPJ: ${dadosProprietario.cpf}` : ''}</p>
+                      {dadosProprietario.endereco && <p>{dadosProprietario.endereco}</p>}
+                    </div>
+                  )}
+
                   <div className="mt-10 pt-6 border-t border-slate-300 text-xs text-slate-600">
                     <div className="border-b border-slate-400 w-56 mb-1 mx-auto"></div>
                     <p className="font-bold text-slate-800">Coordenação do Projeto</p>
@@ -3850,6 +3918,65 @@ export default function App() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {abaAtiva === 'configuracoes' && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 max-w-2xl mx-auto">
+            <h2 className="text-xl font-bold text-slate-800 mb-1 flex items-center gap-2">
+              <Settings className="w-6 h-6 text-emerald-600" /> Configurações — Cadastro do Proprietário
+            </h2>
+            <p className="text-xs text-slate-500 mb-6">
+              Esses dados passam a aparecer no rodapé de todo recibo de pagamento gerado (aba Pagamentos e
+              Portal da Igreja), identificando quem está emitindo o recibo — útil pra controle fiscal.
+            </p>
+
+            {mensagemProprietario && (
+              <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0" />
+                <span>{mensagemProprietario}</span>
+              </div>
+            )}
+
+            <form onSubmit={salvarProprietario} className="space-y-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nome completo (ou razão social)</label>
+                <input
+                  type="text"
+                  value={formProprietario.nome}
+                  onChange={(e) => setFormProprietario({ ...formProprietario, nome: e.target.value })}
+                  placeholder="Ex: Daniel Basílio"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">CPF (ou CNPJ)</label>
+                <input
+                  type="text"
+                  value={formProprietario.cpf}
+                  onChange={(e) => setFormProprietario({ ...formProprietario, cpf: e.target.value })}
+                  placeholder="000.000.000-00"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Endereço completo</label>
+                <textarea
+                  value={formProprietario.endereco}
+                  onChange={(e) => setFormProprietario({ ...formProprietario, endereco: e.target.value })}
+                  placeholder="Rua, número, bairro, cidade - UF, CEP"
+                  rows={2}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 resize-none"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={salvandoProprietario}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-sm disabled:opacity-60"
+              >
+                {salvandoProprietario ? 'Salvando...' : 'Salvar Dados'}
+              </button>
+            </form>
           </div>
         )}
 
