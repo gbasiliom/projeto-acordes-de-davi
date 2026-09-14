@@ -346,6 +346,11 @@ export default function App() {
   // "aluno", porque senão a conta da igreja cairia no Portal do Aluno por engano.
   const souIgreja = !!(usuario && !usuario.isAnonymous && !souAdmin && igrejasCadastradas.some(i => i.uid === usuario.uid));
   const souAluno = !!(usuario && !usuario.isAnonymous && usuario.email !== ADMIN_EMAIL && !souIgreja);
+  // Igreja logada (Portal da Igreja) e o polo que ela mantém — precisa estar calculado
+  // aqui em cima (e não só mais abaixo, perto de onde era usado antes) porque o efeito
+  // que busca agendamentos/presenças/avaliações, logo a seguir, precisa do poloId dela
+  // pra montar o filtro certo da busca.
+  const minhaIgreja = usuario ? igrejasCadastradas.find(i => i.uid === usuario.uid) : null;
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
@@ -1876,7 +1881,8 @@ export default function App() {
   // Igreja logada no Portal da Igreja e os alunos do polo que ela mantém — as regras do
   // Firestore já garantem que "agendamentos" só traz os alunos daquele polo pra essa
   // conta (nunca os alunos de outro polo), igual já acontece pro aluno individual.
-  const minhaIgreja = usuario ? igrejasCadastradas.find(i => i.uid === usuario.uid) : null;
+  // ("minhaIgreja" agora é calculado bem mais acima, junto com "souAdmin"/"souIgreja",
+  // porque o efeito que busca agendamentos/presenças/avaliações precisa dele.)
   const meusAlunosIgreja = minhaIgreja ? agendamentos.filter(item => item.local === minhaIgreja.poloId) : [];
 
   // Assim que o webhook do Mercado Pago confirmar o pagamento (marcando "pago" no
