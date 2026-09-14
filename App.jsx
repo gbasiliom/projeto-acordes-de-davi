@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil } from 'lucide-react';
+import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil, ClipboardList, TrendingUp } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserSessionPersistence } from 'firebase/auth';
 import { getFirestore, collection, query, where, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
@@ -111,6 +111,66 @@ const gerarDatasDaTurma = (turma, dataInicioIso) => {
     atual.setDate(atual.getDate() + passoDias);
   }
   return datas;
+};
+
+// --- Cálculo automático de vencimento pro relatório Financeiro (aba "Financeiro") ---
+// Não existe campo de "data de vencimento" pra digitar — o vencimento é sempre
+// CALCULADO a partir da grade, com duas cadências diferentes combinadas com você:
+//   • Pacote (igreja/polo): vence a cada 14 dias (quinzena) contados da "Data de início
+//     das aulas" do polo, sem depender do dia da semana de nenhuma turma específica.
+//   • Individual: vence a cada 5 aulas que realmente estão na grade daquele aluno
+//     (reaproveita o gerarDatasDaTurma acima, que já sabe ler "Terça-feira",
+//     "Sexta (Quinzenal)" etc.).
+// Nos dois casos, a regra de status é a mesma: ainda não chegou a data -> "Pendente"
+// (pagamento previsto); a data já chegou/passou e ainda não foi marcado como pago ->
+// "Atrasado". Uma conta com "pago" marcado sempre aparece como "Em dia" — marcar como
+// pago não fecha e reabre um novo ciclo sozinho a cada quinzena/5 aulas (isso exigiria
+// guardar um histórico de pagamentos, que não existe hoje).
+
+// Vencimento periódico simples (usado pro pacote/igreja): a cada "passoDias" dias,
+// contados de dataInicioIso. Devolve null se o polo ainda não tem data de início
+// definida (não dá pra calcular nada sem isso).
+const calcularVencimentoPeriodico = (dataInicioIso, passoDias) => {
+  const inicio = paraDataLocal(dataInicioIso);
+  if (!inicio) return null;
+
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const diasDesdeInicio = Math.floor((hoje - inicio) / 86400000);
+
+  if (diasDesdeInicio < passoDias) {
+    // Ainda não fechou nem o primeiro ciclo — o vencimento mostrado é o primeiro,
+    // ainda no futuro (por isso sempre cai em "Pendente").
+    const primeiroVencimento = new Date(inicio);
+    primeiroVencimento.setDate(primeiroVencimento.getDate() + passoDias);
+    return { vencimento: paraISO(primeiroVencimento), passadoAlgum: false };
+  }
+
+  const ciclosFechados = Math.floor(diasDesdeInicio / passoDias);
+  const vencimentoAtual = new Date(inicio);
+  vencimentoAtual.setDate(vencimentoAtual.getDate() + ciclosFechados * passoDias);
+  return { vencimento: paraISO(vencimentoAtual), passadoAlgum: true };
+};
+
+// Vencimento por quantidade de aulas (usado pro individual): a cada "cadaQuantasAulas"
+// datas reais da turma daquele aluno (gerarDatasDaTurma já limita a 5 meses de
+// calendário). Devolve null se não for possível calcular ainda — turma com "dia" não
+// reconhecido, polo sem data de início, ou grade curta demais pra alcançar nem o
+// primeiro ciclo dentro desses 5 meses.
+const calcularVencimentoPorAulas = (turmaFake, dataInicioIso, cadaQuantasAulas) => {
+  const datas = gerarDatasDaTurma(turmaFake, dataInicioIso);
+  if (datas.length < cadaQuantasAulas) return null;
+
+  const hojeIso = paraISO(new Date());
+  const aulasAteHoje = datas.filter(d => d <= hojeIso).length;
+
+  if (aulasAteHoje < cadaQuantasAulas) {
+    return { vencimento: datas[cadaQuantasAulas - 1], passadoAlgum: false };
+  }
+
+  const ciclosFechados = Math.floor(aulasAteHoje / cadaQuantasAulas);
+  const indiceVencimento = ciclosFechados * cadaQuantasAulas - 1;
+  return { vencimento: datas[indiceVencimento], passadoAlgum: true };
 };
 
 // yyyy-mm-dd -> dd/mm/yyyy (mais os dois pontos do dia da semana), pra exibir no
@@ -1066,6 +1126,9 @@ export default function App() {
     if (!file) return;
 
     const reader = new FileReader();
+    reader.onerror = () => {
+      setMensagemImportacao('Não foi possível ler esse arquivo. Tente selecionar o arquivo de novo.');
+    };
     reader.onload = async (event) => {
       let backup;
       try {
@@ -1164,6 +1227,9 @@ export default function App() {
     if (!file) return;
 
     const reader = new FileReader();
+    reader.onerror = () => {
+      setMensagemImportacao('Não foi possível ler esse arquivo. Tente selecionar o arquivo de novo.');
+    };
     reader.onload = async (event) => {
       try {
         const linhas = event.target.result.split(/\r?\n/).filter(l => l.trim());
@@ -1874,6 +1940,122 @@ export default function App() {
     );
   };
 
+  // Relatório de vagas livres em TODA a grade (todos os polos e instrumentos, não só o
+  // que o aluno estiver escolhendo no momento) — é o que alimenta a aba "Vagas" do admin,
+  // pra você saber rapidinho onde ainda tem espaço aberto e poder divulgar/oferecer.
+  const relatorioVagas = useMemo(() => {
+    const porPolo = {};
+    let totalVagas = 0;
+    let totalLivres = 0;
+
+    turmasCadastradas.forEach((t) => {
+      if (!porPolo[t.local]) {
+        porPolo[t.local] = { total: 0, livres: 0, porInstrumento: {} };
+      }
+      if (!porPolo[t.local].porInstrumento[t.instrumento]) {
+        porPolo[t.local].porInstrumento[t.instrumento] = { total: 0, livres: 0, vagasLivres: [] };
+      }
+      const bucketInstrumento = porPolo[t.local].porInstrumento[t.instrumento];
+
+      (t.horarios || []).forEach((h) => {
+        const id = `vaga-${t.local}-${t.instrumento}-${t.dia}-${h.value}`;
+        const livre = !vagasOcupadas.includes(id);
+
+        totalVagas++;
+        porPolo[t.local].total++;
+        bucketInstrumento.total++;
+        if (livre) {
+          totalLivres++;
+          porPolo[t.local].livres++;
+          bucketInstrumento.livres++;
+          bucketInstrumento.vagasLivres.push({ dia: t.dia, horarioLabel: h.label });
+        }
+      });
+    });
+
+    return { porPolo, totalVagas, totalLivres };
+  }, [turmasCadastradas, vagasOcupadas]);
+
+  // Relatório financeiro (aba "Financeiro") — cruza cada conta (aluno individual ou
+  // igreja/pacote) com o vencimento calculado automaticamente (ver comentário grande
+  // acima de calcularVencimentoPeriodico) e separa em Pago / Pendente / Atrasado / Sem
+  // dados suficientes pra calcular (polo sem "Data de início das aulas" definida, turma
+  // com "dia" que o sistema não conseguiu interpretar, ou pacote sem conta de igreja
+  // vinculada ainda na aba Igrejas).
+  const relatorioFinanceiro = useMemo(() => {
+    const linhas = [];
+
+    // Alunos individuais
+    agendamentos
+      .filter(item => (item.tipoPagamento || 'pacote') === 'individual')
+      .forEach(item => {
+        const polo = LOCALIZACOES.find(l => l.id === item.local);
+        const valor = Number(item.valorCombinado) || 0;
+        let status = 'semDados';
+        let vencimento = null;
+        let motivo = !polo?.dataInicioAulas
+          ? 'Falta definir a "Data de início das aulas" desse polo na aba Horários.'
+          : 'A turma desse aluno tem um "dia" que o sistema não conseguiu reconhecer (ou a grade é curta demais pra alcançar a 1ª cobrança dentro de 5 meses).';
+
+        if (item.pago) {
+          status = 'pago';
+        } else if (polo?.dataInicioAulas) {
+          const calculo = calcularVencimentoPorAulas({ dia: item.dia }, polo.dataInicioAulas, 5);
+          if (calculo) {
+            vencimento = calculo.vencimento;
+            status = calculo.passadoAlgum ? 'atrasado' : 'pendente';
+          }
+        }
+
+        linhas.push({ tipo: 'individual', nome: item.nome, local: polo?.nome || item.local, valor, vencimento, status, motivo });
+      });
+
+    // Pacote/igreja — um item por polo que tenha pelo menos um aluno em pacote,
+    // igual à aba Pagamentos já faz (o valor/pago fica no documento da igreja, não no
+    // aluno individualmente).
+    const polosComPacote = new Set(
+      agendamentos
+        .filter(item => (item.tipoPagamento || 'pacote') !== 'individual')
+        .map(item => item.local)
+    );
+
+    polosComPacote.forEach((localId) => {
+      const polo = LOCALIZACOES.find(l => l.id === localId);
+      const igrejaDoPolo = igrejasCadastradas.find(i => i.poloId === localId);
+      const valor = Number(igrejaDoPolo?.valorCombinado) || 0;
+      let status = 'semDados';
+      let vencimento = null;
+      let motivo = !igrejaDoPolo
+        ? 'Falta criar o acesso dessa igreja na aba Igrejas (é lá que fica o valor combinado e o status de pago).'
+        : 'Falta definir a "Data de início das aulas" desse polo na aba Horários.';
+
+      if (igrejaDoPolo?.pago) {
+        status = 'pago';
+      } else if (igrejaDoPolo && polo?.dataInicioAulas) {
+        const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14);
+        if (calculo) {
+          vencimento = calculo.vencimento;
+          status = calculo.passadoAlgum ? 'atrasado' : 'pendente';
+        }
+      }
+
+      linhas.push({ tipo: 'pacote', nome: igrejaDoPolo?.nome || polo?.nome || localId, local: polo?.nome || localId, valor, vencimento, status, motivo });
+    });
+
+    const porStatus = { pago: [], pendente: [], atrasado: [], semDados: [] };
+    linhas.forEach((linha) => porStatus[linha.status].push(linha));
+    Object.values(porStatus).forEach((lista) => lista.sort((a, b) => (a.vencimento || '').localeCompare(b.vencimento || '')));
+
+    const somaValor = (lista) => lista.reduce((soma, l) => soma + l.valor, 0);
+
+    return {
+      pago: { itens: porStatus.pago, total: somaValor(porStatus.pago) },
+      pendente: { itens: porStatus.pendente, total: somaValor(porStatus.pendente) },
+      atrasado: { itens: porStatus.atrasado, total: somaValor(porStatus.atrasado) },
+      semDados: { itens: porStatus.semDados, total: somaValor(porStatus.semDados) }
+    };
+  }, [agendamentos, igrejasCadastradas]);
+
   // Agendamentos do próprio aluno logado (as regras do Firestore já garantem
   // que "agendamentos" só traz os dele quando não é admin, mas filtramos de novo por clareza)
   const meusAgendamentos = usuario ? agendamentos.filter(item => item.uid === usuario.uid) : [];
@@ -2071,6 +2253,18 @@ export default function App() {
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'horarios' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
                 >
                   <Clock className="w-4 h-4" /> Horários
+                </button>
+                <button
+                  onClick={() => setAbaAtiva('vagas')}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'vagas' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                >
+                  <ClipboardList className="w-4 h-4" /> Vagas
+                </button>
+                <button
+                  onClick={() => setAbaAtiva('financeiro')}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'financeiro' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                >
+                  <TrendingUp className="w-4 h-4" /> Financeiro
                 </button>
                 <button
                   onClick={() => setAbaAtiva('igrejas')}
@@ -3525,6 +3719,154 @@ export default function App() {
           </div>
         )}
 
+        {abaAtiva === 'vagas' && (
+          <div className="space-y-6 max-w-4xl mx-auto">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-2 pb-4 border-b border-slate-100">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <ClipboardList className="w-6 h-6 text-emerald-600" /> Vagas Disponíveis
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Quantas vagas ainda estão livres em cada polo/instrumento, pra você saber onde ainda dá pra oferecer.
+                  </p>
+                </div>
+                <span className="text-sm bg-emerald-100 text-emerald-800 px-3 py-1.5 rounded-full font-bold shrink-0">
+                  {relatorioVagas.totalLivres} livre{relatorioVagas.totalLivres === 1 ? '' : 's'} de {relatorioVagas.totalVagas}
+                </span>
+              </div>
+
+              {relatorioVagas.totalVagas === 0 && (
+                <div className="text-center py-12 bg-slate-50 rounded-lg border border-dashed border-slate-300 mt-4">
+                  <ClipboardList className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                  <p className="text-slate-500 font-medium text-sm">Nenhuma turma cadastrada ainda.</p>
+                  <p className="text-xs text-slate-400 mt-1">Cadastre a grade na aba "Horários" pra esse relatório aparecer aqui.</p>
+                </div>
+              )}
+            </div>
+
+            {LOCALIZACOES.map((polo) => {
+              const dadosPolo = relatorioVagas.porPolo[polo.id];
+              if (!dadosPolo || dadosPolo.total === 0) return null;
+              return (
+                <div key={polo.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                  <div className="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
+                    <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-emerald-600" /> {polo.nome}
+                    </h3>
+                    <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${dadosPolo.livres > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {dadosPolo.livres} livre{dadosPolo.livres === 1 ? '' : 's'} de {dadosPolo.total}
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {Object.entries(dadosPolo.porInstrumento).map(([instrumentoId, dadosInstrumento]) => (
+                      <div key={instrumentoId} className="p-3 rounded-lg border border-slate-200 bg-slate-50">
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <span className="text-xs font-semibold uppercase text-emerald-700">{nomeInstrumento(instrumentoId)}</span>
+                          <span className="text-xs text-slate-500 font-medium">
+                            {dadosInstrumento.livres} livre{dadosInstrumento.livres === 1 ? '' : 's'} de {dadosInstrumento.total}
+                          </span>
+                        </div>
+                        {dadosInstrumento.vagasLivres.length === 0 ? (
+                          <p className="text-xs text-slate-400">Sem vagas livres nesse instrumento agora — está tudo ocupado.</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {dadosInstrumento.vagasLivres.map((v, i) => (
+                              <span
+                                key={`${v.dia}-${v.horarioLabel}-${i}`}
+                                className="inline-flex items-center px-2 py-1 rounded text-xs font-medium border border-emerald-200 bg-white text-emerald-700"
+                              >
+                                {v.dia} · {v.horarioLabel}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {abaAtiva === 'financeiro' && (
+          <div className="space-y-6 max-w-4xl mx-auto">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 mb-1">
+                <TrendingUp className="w-6 h-6 text-emerald-600" /> Relatório Financeiro
+              </h2>
+              <p className="text-xs text-slate-500">
+                Vencimento calculado sozinho: a cada 14 dias (quinzena) pro pacote/igreja, a cada 5 aulas pro individual —
+                sem precisar digitar nenhuma data. Antes do vencimento chegar é "Pendente" (pagamento previsto); depois que
+                chega/passa sem ter sido marcado como pago, vira "Atrasado".
+              </p>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+                <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+                  <p className="text-[10px] font-bold text-green-700 uppercase">Em dia</p>
+                  <p className="text-lg font-bold text-green-800">{relatorioFinanceiro.pago.itens.length}</p>
+                  <p className="text-[10px] text-green-700">R$ {relatorioFinanceiro.pago.total.toFixed(2)}</p>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+                  <p className="text-[10px] font-bold text-amber-700 uppercase">Pendente</p>
+                  <p className="text-lg font-bold text-amber-800">{relatorioFinanceiro.pendente.itens.length}</p>
+                  <p className="text-[10px] text-amber-700">R$ {relatorioFinanceiro.pendente.total.toFixed(2)}</p>
+                </div>
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+                  <p className="text-[10px] font-bold text-red-700 uppercase">Atrasado</p>
+                  <p className="text-lg font-bold text-red-800">{relatorioFinanceiro.atrasado.itens.length}</p>
+                  <p className="text-[10px] text-red-700">R$ {relatorioFinanceiro.atrasado.total.toFixed(2)}</p>
+                </div>
+                <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-center">
+                  <p className="text-[10px] font-bold text-slate-500 uppercase">Sem dados</p>
+                  <p className="text-lg font-bold text-slate-600">{relatorioFinanceiro.semDados.itens.length}</p>
+                  <p className="text-[10px] text-slate-500">falta config.</p>
+                </div>
+              </div>
+            </div>
+
+            {[
+              { chave: 'atrasado', titulo: 'Atrasados', cor: 'text-red-700', vazio: 'Nenhuma conta atrasada. 🎉' },
+              { chave: 'pendente', titulo: 'Pendentes (pagamento previsto)', cor: 'text-amber-700', vazio: 'Nenhuma conta pendente no momento.' },
+              { chave: 'pago', titulo: 'Em dia', cor: 'text-green-700', vazio: 'Nenhuma conta paga ainda.' },
+              { chave: 'semDados', titulo: 'Sem dados suficientes pra calcular', cor: 'text-slate-500', vazio: 'Tudo certo — nenhuma conta travada por falta de configuração.' }
+            ].map((secao) => (
+              <div key={secao.chave} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h3 className={`text-sm font-bold uppercase tracking-wide mb-3 ${secao.cor}`}>{secao.titulo}</h3>
+                {relatorioFinanceiro[secao.chave].itens.length === 0 ? (
+                  <p className="text-xs text-slate-400">{secao.vazio}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {relatorioFinanceiro[secao.chave].itens.map((linha, i) => (
+                      <div key={`${linha.tipo}-${linha.nome}-${i}`} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50">
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-slate-800 truncate">{linha.nome}</p>
+                          <p className="text-xs text-slate-500">
+                            {linha.tipo === 'individual' ? 'Individual' : 'Pacote/Igreja'} · {linha.local}
+                          </p>
+                          {secao.chave === 'semDados' && linha.motivo && (
+                            <p className="text-[10px] text-slate-400 mt-0.5">{linha.motivo}</p>
+                          )}
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-sm font-bold text-slate-800">R$ {linha.valor.toFixed(2)}</p>
+                          {linha.vencimento && (
+                            <p className="text-[10px] text-slate-400">
+                              Vencimento: {new Date(`${linha.vencimento}T00:00:00`).toLocaleDateString('pt-BR')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
         {abaAtiva === 'igrejas' && (
           <div className="space-y-6 max-w-4xl mx-auto">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
@@ -3622,9 +3964,13 @@ export default function App() {
                   )}
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText(dadosPixIgreja.qrCode || '');
-                      setMensagemSucesso('Código Pix copiado!');
-                      setTimeout(() => setMensagemSucesso(''), 3000);
+                      navigator.clipboard.writeText(dadosPixIgreja.qrCode || '').then(() => {
+                        setMensagemSucesso('Código Pix copiado!');
+                        setTimeout(() => setMensagemSucesso(''), 3000);
+                      }).catch(() => {
+                        setMensagemSucesso('Não foi possível copiar automaticamente — copie o código manualmente.');
+                        setTimeout(() => setMensagemSucesso(''), 4000);
+                      });
                     }}
                     className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition mb-2"
                   >
@@ -4424,9 +4770,13 @@ export default function App() {
                         )}
                         <button
                           onClick={() => {
-                            navigator.clipboard.writeText(dadosPix.qrCode || '');
-                            setMensagemSucesso('Código Pix copiado!');
-                            setTimeout(() => setMensagemSucesso(''), 3000);
+                            navigator.clipboard.writeText(dadosPix.qrCode || '').then(() => {
+                              setMensagemSucesso('Código Pix copiado!');
+                              setTimeout(() => setMensagemSucesso(''), 3000);
+                            }).catch(() => {
+                              setMensagemSucesso('Não foi possível copiar automaticamente — copie o código manualmente.');
+                              setTimeout(() => setMensagemSucesso(''), 4000);
+                            });
                           }}
                           className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition mb-2"
                         >
@@ -4625,9 +4975,13 @@ export default function App() {
                       )}
                       <button
                         onClick={() => {
-                          navigator.clipboard.writeText(dadosPixIgreja.qrCode || '');
-                          setMensagemSucesso('Código Pix copiado!');
-                          setTimeout(() => setMensagemSucesso(''), 3000);
+                          navigator.clipboard.writeText(dadosPixIgreja.qrCode || '').then(() => {
+                            setMensagemSucesso('Código Pix copiado!');
+                            setTimeout(() => setMensagemSucesso(''), 3000);
+                          }).catch(() => {
+                            setMensagemSucesso('Não foi possível copiar automaticamente — copie o código manualmente.');
+                            setTimeout(() => setMensagemSucesso(''), 4000);
+                          });
                         }}
                         className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition mb-2"
                       >
