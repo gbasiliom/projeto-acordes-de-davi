@@ -513,10 +513,19 @@ export default function App() {
         credencial = await createUserWithEmailAndPassword(auth, dadosAluno.email, dadosAluno.senha);
       } catch (errCriar) {
         if (errCriar.code === 'auth/email-already-in-use') {
+          // Repetir o mesmo e-mail em mais de um cadastro só é permitido pra Banda
+          // (vários integrantes registrados sob o mesmo login/contato) — pra Violão e
+          // Bateria, cada aluno precisa do próprio e-mail, senão a agenda/portal de um
+          // se mistura com a do outro.
+          if (instrumentoSelecionado !== 'banda') {
+            setErroAgendamento('Esse e-mail já está em uso por outro cadastro. Use um e-mail diferente — repetir o mesmo e-mail só é permitido no cadastro de Banda.');
+            setSalvandoAgendamento(false);
+            return;
+          }
           try {
             credencial = await signInWithEmailAndPassword(auth, dadosAluno.email, dadosAluno.senha);
           } catch (errLogin) {
-            setErroAgendamento('Esse e-mail já tem cadastro, mas a senha não confere. Confira a senha ou entre pelo "Portal do Aluno".');
+            setErroAgendamento('Esse e-mail já tem cadastro, mas a senha não confere. Use a mesma senha do primeiro integrante da banda cadastrado com esse e-mail.');
             setSalvandoAgendamento(false);
             return;
           }
