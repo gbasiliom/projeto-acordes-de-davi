@@ -352,20 +352,6 @@ export default function App() {
       }
     });
 
-    // Lista completa de agendamentos — as regras do Firestore garantem que só o admin
-    // recebe todos os documentos; um aluno logado só recebe os próprios.
-    const unsubscribe = onSnapshot(collection(db, 'agendamentos'), (snapshot) => {
-      const lista = snapshot.docs.map(docItem => ({
-        id: docItem.id,
-        ...docItem.data()
-      }));
-      setAgendamentos(lista);
-      setLoading(false);
-    }, (error) => {
-      console.error("Erro ao buscar agendamentos do Firestore:", error);
-      setLoading(false);
-    });
-
     // Coleção pública só com "esse horário está ocupado" — sem nenhum dado do aluno.
     const unsubVagas = onSnapshot(collection(db, 'vagas'), (snapshot) => {
       setVagasOcupadas(snapshot.docs.map(d => d.id));
@@ -398,21 +384,6 @@ export default function App() {
       console.error("Erro ao buscar igrejas:", error);
     });
 
-    // Presença marcada por data (aba Pauta). Aluno logado só recebe as próprias
-    // (regra do Firestore filtra por uid), admin recebe todas.
-    const unsubPresencas = onSnapshot(collection(db, 'presencas'), (snapshot) => {
-      setPresencasCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (error) => {
-      console.error("Erro ao buscar presenças:", error);
-    });
-
-    // Avaliações de desempenho (nota livre por data). Mesma regra de acesso das presenças.
-    const unsubAvaliacoes = onSnapshot(collection(db, 'avaliacoes'), (snapshot) => {
-      setAvaliacoesCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (error) => {
-      console.error("Erro ao buscar avaliações:", error);
-    });
-
     // Materiais/vídeos de estudo — pública pra leitura (qualquer aluno logado vê a lista).
     const unsubMateriais = onSnapshot(collection(db, 'materiais'), (snapshot) => {
       setMateriaisCadastrados(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -433,17 +404,61 @@ export default function App() {
 
     return () => {
       unsubAuth();
-      unsubscribe();
       unsubVagas();
       unsubTurmas();
       unsubPolos();
       unsubIgrejas();
-      unsubPresencas();
-      unsubAvaliacoes();
       unsubMateriais();
       unsubProprietario();
     };
   }, []);
+
+  // Agendamentos, presenças e avaliações dependem de QUEM está pedindo (a regra do
+  // Firestore só libera pra dono do registro, pra igreja do polo, ou pro admin) — por
+  // isso, diferente das coleções públicas acima, essas três só são buscadas DEPOIS que
+  // o login termina de resolver, e são buscadas DE NOVO sempre que o login mudar (login,
+  // logout, virar outra conta). Sem isso tinha uma corrida: a busca começava assim que a
+  // página abria, muitas vezes antes do Firebase terminar de restaurar a sessão salva —
+  // se a busca acontecesse nesse instante ainda sem login válido, ela era recusada e
+  // NUNCA tentava de novo, mesmo depois do login terminar de carregar. Era exatamente
+  // isso que fazia o Portal do Aluno aparecer vazio só depois de atualizar a página (e
+  // funcionar normalmente navegando dentro do app sem recarregar, porque aí o login já
+  // estava resolvido de antes).
+  useEffect(() => {
+    if (!usuario) {
+      setLoading(false);
+      setAgendamentos([]);
+      setPresencasCadastradas([]);
+      setAvaliacoesCadastradas([]);
+      return;
+    }
+
+    const unsubAgendamentos = onSnapshot(collection(db, 'agendamentos'), (snapshot) => {
+      setAgendamentos(snapshot.docs.map(docItem => ({ id: docItem.id, ...docItem.data() })));
+      setLoading(false);
+    }, (error) => {
+      console.error("Erro ao buscar agendamentos do Firestore:", error);
+      setLoading(false);
+    });
+
+    const unsubPresencas = onSnapshot(collection(db, 'presencas'), (snapshot) => {
+      setPresencasCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.error("Erro ao buscar presenças:", error);
+    });
+
+    const unsubAvaliacoes = onSnapshot(collection(db, 'avaliacoes'), (snapshot) => {
+      setAvaliacoesCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.error("Erro ao buscar avaliações:", error);
+    });
+
+    return () => {
+      unsubAgendamentos();
+      unsubPresencas();
+      unsubAvaliacoes();
+    };
+  }, [usuario?.uid]);
 
   const fazerLogin = async (e) => {
     e.preventDefault();
