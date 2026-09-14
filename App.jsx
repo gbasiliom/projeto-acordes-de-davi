@@ -124,8 +124,15 @@ const formatarDataCalendario = (isoTexto) => {
 
 const INSTRUMENTOS = [
   { id: 'violao', nome: 'Turma de Violão', Icone: Guitar },
-  { id: 'bateria', nome: 'Turma de Bateria', Icone: Music }
+  { id: 'bateria', nome: 'Turma de Bateria', Icone: Music },
+  { id: 'banda', nome: 'Turma de Banda', Icone: Users }
 ];
+
+// Nome "curto" de um instrumento (sem o "Turma de" na frente) a partir do id salvo no
+// cadastro/turma — usado em telas que só precisam mostrar "Violão"/"Bateria"/"Banda",
+// e sempre olhando a lista INSTRUMENTOS (nunca um if/else fixo), pra funcionar sozinho
+// se um instrumento novo for adicionado no futuro.
+const nomeInstrumento = (id) => INSTRUMENTOS.find(i => i.id === id)?.nome.replace('Turma de ', '') || id || '';
 
 // Valores fixos usados como SUGESTÃO automática ao gerar um recibo — o campo de valor
 // no recibo sempre fica editável, então isso nunca trava um caso fora da regra.
@@ -2252,8 +2259,9 @@ export default function App() {
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="todos">Todos os Instrumentos</option>
-                  <option value="violao">Violão</option>
-                  <option value="bateria">Bateria</option>
+                  {INSTRUMENTOS.map((inst) => (
+                    <option key={inst.id} value={inst.id}>{nomeInstrumento(inst.id)}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -2374,10 +2382,11 @@ export default function App() {
                     <select
                       value={editandoAluno.instrumento}
                       onChange={(e) => setEditandoAluno({ ...editandoAluno, instrumento: e.target.value })}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white capitalize focus:ring-2 focus:ring-emerald-500"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
                     >
-                      <option value="violao">Violão</option>
-                      <option value="bateria">Bateria</option>
+                      {INSTRUMENTOS.map((inst) => (
+                        <option key={inst.id} value={inst.id}>{nomeInstrumento(inst.id)}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -2989,6 +2998,7 @@ export default function App() {
                   >
                     <option value="Violão">Violão</option>
                     <option value="Bateria">Bateria</option>
+                    <option value="Banda">Banda</option>
                     <option value="Musicalização">Musicalização Geral</option>
                   </select>
                 </div>
@@ -3315,7 +3325,7 @@ export default function App() {
                       <div key={t.id} className="p-3 rounded-lg border border-slate-200 bg-slate-50">
                         <div className="flex items-center justify-between gap-3 mb-2">
                           <div>
-                            <span className="text-xs font-semibold uppercase text-emerald-700">{t.instrumento === 'bateria' ? 'Bateria' : 'Violão'}</span>
+                            <span className="text-xs font-semibold uppercase text-emerald-700">{nomeInstrumento(t.instrumento)}</span>
                             <p className="text-sm font-bold text-slate-800">{t.dia}</p>
                             <p className="text-xs text-slate-500">
                               {t.horarios?.[0]?.label?.split(' - ')[0]} até {t.horarios?.[t.horarios.length - 1]?.label?.split(' - ')[1]} · {t.horarios?.length || 0} vaga(s)
@@ -3779,9 +3789,10 @@ export default function App() {
                   onChange={(e) => setNovoMaterial({ ...novoMaterial, instrumento: e.target.value })}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
                 >
-                  <option value="todos">Violão e Bateria</option>
-                  <option value="violao">Só Violão</option>
-                  <option value="bateria">Só Bateria</option>
+                  <option value="todos">Todos os instrumentos</option>
+                  {INSTRUMENTOS.map((inst) => (
+                    <option key={inst.id} value={inst.id}>Só {nomeInstrumento(inst.id)}</option>
+                  ))}
                 </select>
               </div>
               <div className="sm:col-span-2">
@@ -3811,7 +3822,7 @@ export default function App() {
                   <div className="min-w-0">
                     <p className="text-sm font-bold text-slate-800 truncate">{mat.titulo}</p>
                     <p className="text-xs text-slate-500">
-                      {mat.tipo} · {mat.instrumento === 'todos' ? 'Violão e Bateria' : mat.instrumento === 'violao' ? 'Violão' : 'Bateria'}
+                      {mat.tipo} · {mat.instrumento === 'todos' ? 'Todos os instrumentos' : nomeInstrumento(mat.instrumento)}
                     </p>
                     <a href={mat.link} target="_blank" rel="noreferrer" className="text-xs text-emerald-600 hover:underline break-all">{mat.link}</a>
                   </div>
@@ -3882,7 +3893,7 @@ export default function App() {
                     <span className="bg-emerald-600 text-white w-5 h-5 rounded-full inline-flex items-center justify-center text-xs">2</span>
                     Turma / Instrumento
                   </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className={`grid grid-cols-1 gap-3 ${instrumentosDoPolo.length >= 3 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
                     {instrumentosDoPolo.map((inst) => (
                       <div
                         key={inst.id}
