@@ -561,6 +561,14 @@ export default function App() {
 
       const uid = credencial.user.uid;
 
+      // Atualiza o "usuario" logo aqui, sem esperar o listener onAuthStateChanged
+      // avisar (ele é assíncrono e pode demorar um instante) — é o que faz o Portal
+      // do Aluno já reconhecer esse login na hora de ir pra aba "portal" duas linhas
+      // abaixo. Sem isso, a troca de aba acontecia rápido demais: a página ainda via
+      // a sessão anônima antiga por uma fração de segundo e mostrava de novo a tela
+      // de agendamento (ou "nenhuma aula agendada") em vez do portal com a aula nova.
+      setUsuario(credencial.user);
+
       await runTransaction(db, async (transaction) => {
         const vagaRef = doc(db, 'vagas', vagaSelecionada);
         const vagaSnap = await transaction.get(vagaRef);
