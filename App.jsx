@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
+import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserSessionPersistence } from 'firebase/auth';
+import { getFirestore, collection, query, where, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
 
 // E-mail que tem acesso de administrador. Todo outro login vira "aluno".
 const ADMIN_EMAIL = 'auladeinstrumentosmusicais2026@gmail.com';
@@ -219,6 +219,15 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+// Login "por sessão", em vez de guardado pra sempre no dispositivo — fecha sozinho
+// quando o aplicativo é encerrado. Assim, seja o login do admin, do Portal do Aluno ou
+// do Portal da Igreja, fechando o app a próxima abertura pede login de novo, em vez de
+// continuar entrando direto na conta de quem usou por último (importante porque várias
+// pessoas diferentes podem abrir esse mesmo app/computador).
+setPersistence(auth, browserSessionPersistence).catch((err) => {
+  console.error('Erro ao configurar a persistência do login:', err);
+});
+
 export default function App() {
   const [agendamentos, setAgendamentos] = useState([]);
   const [vagasOcupadas, setVagasOcupadas] = useState([]);
@@ -433,7 +442,41 @@ export default function App() {
       return;
     }
 
-    const unsubAgendamentos = onSnapshot(collection(db, 'agendamentos'), (snapshot) => {
+    // A causa de verdade do Portal ficar vazio NÃO era só a corrida de tempo (já
+    // corrigida acima, buscando só depois do login resolver) — era a FORMA da busca.
+    // A regra do Firestore só libera cada agendamento/presença/avaliação pro dono
+    // (uid), pra igreja daquele polo (local == poloId), ou pro admin — e o Firestore
+    // recusa uma busca "sem filtro nenhum" (pega a coleção inteira) sempre que ela não
+    // conseguir garantir essa regra pra QUALQUER documento que pudesse existir ali, não
+    // importa quão certo esteja o login. Então, mesmo com o login perfeito, a busca sem
+    // filtro nunca ia funcionar pra aluno/igreja — só funcionava (por acidente) pro
+    // admin, porque a parte da regra dele não depende do conteúdo do documento. A busca
+    // agora usa o MESMO filtro que a regra exige: sem filtro pro admin (a regra libera
+    // geral), filtrando por "uid" pro aluno, e filtrando por "local" (o polo) pra igreja.
+    let filtroAgendamentos = collection(db, 'agendamentos');
+    let filtroPresencas = collection(db, 'presencas');
+    let filtroAvaliacoes = collection(db, 'avaliacoes');
+
+    if (!souAdmin) {
+      if (souIgreja) {
+        if (!minhaIgreja?.poloId) {
+          // Ainda não sabemos o polo dessa igreja (lista de igrejas ainda carregando)
+          // — espera a próxima passada deste efeito, em vez de arriscar uma busca sem
+          // filtro que a regra recusaria.
+          setLoading(false);
+          return;
+        }
+        filtroAgendamentos = query(collection(db, 'agendamentos'), where('local', '==', minhaIgreja.poloId));
+        filtroPresencas = query(collection(db, 'presencas'), where('local', '==', minhaIgreja.poloId));
+        filtroAvaliacoes = query(collection(db, 'avaliacoes'), where('local', '==', minhaIgreja.poloId));
+      } else {
+        filtroAgendamentos = query(collection(db, 'agendamentos'), where('uid', '==', usuario.uid));
+        filtroPresencas = query(collection(db, 'presencas'), where('uid', '==', usuario.uid));
+        filtroAvaliacoes = query(collection(db, 'avaliacoes'), where('uid', '==', usuario.uid));
+      }
+    }
+
+    const unsubAgendamentos = onSnapshot(filtroAgendamentos, (snapshot) => {
       setAgendamentos(snapshot.docs.map(docItem => ({ id: docItem.id, ...docItem.data() })));
       setLoading(false);
     }, (error) => {
@@ -441,13 +484,13 @@ export default function App() {
       setLoading(false);
     });
 
-    const unsubPresencas = onSnapshot(collection(db, 'presencas'), (snapshot) => {
+    const unsubPresencas = onSnapshot(filtroPresencas, (snapshot) => {
       setPresencasCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (error) => {
       console.error("Erro ao buscar presenças:", error);
     });
 
-    const unsubAvaliacoes = onSnapshot(collection(db, 'avaliacoes'), (snapshot) => {
+    const unsubAvaliacoes = onSnapshot(filtroAvaliacoes, (snapshot) => {
       setAvaliacoesCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (error) => {
       console.error("Erro ao buscar avaliações:", error);
@@ -458,7 +501,7 @@ export default function App() {
       unsubPresencas();
       unsubAvaliacoes();
     };
-  }, [usuario?.uid]);
+  }, [usuario?.uid, souAdmin, souIgreja, minhaIgreja?.poloId]);
 
   const fazerLogin = async (e) => {
     e.preventDefault();
