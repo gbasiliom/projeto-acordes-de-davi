@@ -436,7 +436,22 @@ export default function App() {
   // sem dados salvos) — usado pra saber quando é seguro gerar o PDF do recibo sem
   // arriscar pegar esse bloco ainda vazio (ver useEffect de baixarPdfRecibo).
   const [proprietarioCarregado, setProprietarioCarregado] = useState(false);
+  // Cópia desse mesmo "carregou ou não" num ref (em vez de só o state) pra
+  // baixarPdfRecibo poder ESPERAR o valor mais atual dentro de uma função comum
+  // (o state, por si só, ficaria "congelado" com o valor de quando o botão foi
+  // desenhado na tela, não com o valor mais recente).
+  const proprietarioCarregadoRef = useRef(false);
+  useEffect(() => { proprietarioCarregadoRef.current = proprietarioCarregado; }, [proprietarioCarregado]);
   const [formProprietario, setFormProprietario] = useState({ nome: '', cpf: '', endereco: '' });
+  // O FORMULÁRIO (o que aparece nos campos da aba Configurações) nunca era preenchido
+  // com o que já estava salvo — sempre abria em branco, mesmo com os dados já
+  // cadastrados antes. Isso enganava (parecia que "os dados tinham desaparecido"),
+  // e tinha um risco sério: clicar em "Salvar Dados" com os campos em branco
+  // sobrescrevia o cadastro real com nada. Esse efeito copia pro formulário o que
+  // realmente está salvo, sempre que esse dado chegar/mudar.
+  useEffect(() => {
+    setFormProprietario({ nome: dadosProprietario.nome, cpf: dadosProprietario.cpf, endereco: dadosProprietario.endereco });
+  }, [dadosProprietario.nome, dadosProprietario.cpf, dadosProprietario.endereco]);
   const [salvandoProprietario, setSalvandoProprietario] = useState(false);
   const [mensagemProprietario, setMensagemProprietario] = useState('');
   const [novaIgreja, setNovaIgreja] = useState({ nome: '', poloId: '', responsavel: '', telefone: '' });
@@ -1169,6 +1184,22 @@ export default function App() {
     if (!reciboRef.current) return;
     setGerandoPdfRecibo(true);
     try {
+      // Espera os dados do emissor (aba Configurações) já terem chegado do Firestore
+      // ANTES de tirar a "foto" do recibo — sem isso, gerar o PDF rápido demais (bem
+      // no momento em que a tela abre) tirava a foto com o bloco "Emitido por" ainda
+      // vazio. Espera no máximo 3 segundos; se nesse tempo os dados não chegarem
+      // (ex.: cadastro do emissor realmente vazio), segue sem esse bloco mesmo, em
+      // vez de travar pra sempre.
+      if (!proprietarioCarregadoRef.current) {
+        await new Promise((resolve) => {
+          const inicio = Date.now();
+          const checar = () => {
+            if (proprietarioCarregadoRef.current || Date.now() - inicio > 3000) { resolve(); return; }
+            setTimeout(checar, 100);
+          };
+          checar();
+        });
+      }
       const cartao = reciboRef.current;
       // O cartão do recibo fica dentro de um fundo "position: fixed" (o modal que
       // escurece o resto da tela) — o html2canvas tem um bug conhecido com isso: ele
