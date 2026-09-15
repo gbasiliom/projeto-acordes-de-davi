@@ -3249,7 +3249,11 @@ export default function App() {
                                 // outras (ver PARCELAS_POR_POLO e o relatório Financeiro).
                                 <div className="pt-3 border-t border-slate-200 space-y-2">
                                   {Array.from({ length: numParcelasDoPolo(polo.id) }, (_, i) => i + 1).map((n) => {
-                                    const valorParcela = igrejaDoPolo[`parcela${n}Valor`] ?? (Number(igrejaDoPolo.valorCombinado) || 0) / numParcelasDoPolo(polo.id);
+                                    // O campo de valor começa VAZIO de propósito (não pré-preenchido com a
+                                    // sugestão) — você só registra o valor de verdade no dia que a parcela
+                                    // cair, em vez de correr o risco de deixar passar um valor "cheio" que
+                                    // nem foi confirmado ainda.
+                                    const valorSugeridoParcela = (Number(igrejaDoPolo.valorCombinado) || 0) / numParcelasDoPolo(polo.id);
                                     const pagoParcela = !!igrejaDoPolo[`parcela${n}Pago`];
                                     return (
                                       <div key={n} className="bg-white border border-slate-200 rounded-lg p-2 space-y-1.5">
@@ -3260,15 +3264,24 @@ export default function App() {
                                           </span>
                                         </div>
                                         <div className="grid grid-cols-2 gap-1.5">
-                                          <input
-                                            type="number"
-                                            step="0.01"
-                                            min="0"
-                                            value={valorParcela ?? ''}
-                                            onChange={(e) => alterarValorParcelaIgreja(igrejaDoPolo.id, n, e.target.value)}
-                                            placeholder="0,00"
-                                            className="w-full px-2 py-1 border border-slate-300 rounded-lg text-[11px] bg-white focus:ring-2 focus:ring-emerald-500"
-                                          />
+                                          <div>
+                                            <input
+                                              type="number"
+                                              step="0.01"
+                                              min="0"
+                                              value={igrejaDoPolo[`parcela${n}Valor`] ?? ''}
+                                              onChange={(e) => alterarValorParcelaIgreja(igrejaDoPolo.id, n, e.target.value)}
+                                              placeholder={`Sugestão: ${formatarBRL(valorSugeridoParcela)}`}
+                                              className="w-full px-2 py-1 border border-slate-300 rounded-lg text-[11px] bg-white focus:ring-2 focus:ring-emerald-500"
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => alterarValorParcelaIgreja(igrejaDoPolo.id, n, String(valorSugeridoParcela))}
+                                              className="mt-0.5 text-[9px] font-semibold text-emerald-700 hover:text-emerald-900 underline"
+                                            >
+                                              usar sugestão
+                                            </button>
+                                          </div>
                                           <input
                                             type="date"
                                             value={igrejaDoPolo[`parcela${n}DataPagamento`] || ''}
@@ -4298,7 +4311,9 @@ export default function App() {
                           // tem seu próprio valor/data/status (ver PARCELAS_POR_POLO).
                           <div className="mt-3 pt-3 border-t border-slate-200 grid gap-2 sm:grid-cols-2">
                             {Array.from({ length: numParcelasDoPolo(igreja.poloId) }, (_, i) => i + 1).map((n) => {
-                              const valorParcela = igreja[`parcela${n}Valor`] ?? (Number(igreja.valorCombinado) || 0) / numParcelasDoPolo(igreja.poloId);
+                              // Campo de valor começa vazio de propósito — só é preenchido no dia
+                              // real do pagamento (com o valor combinado, ou clicando "usar sugestão").
+                              const valorSugeridoParcela = (Number(igreja.valorCombinado) || 0) / numParcelasDoPolo(igreja.poloId);
                               const pagoParcela = !!igreja[`parcela${n}Pago`];
                               return (
                                 <div key={n} className="bg-slate-50 border border-slate-200 rounded-lg p-2 space-y-1.5">
@@ -4309,15 +4324,24 @@ export default function App() {
                                     </span>
                                   </div>
                                   <div className="grid grid-cols-2 gap-1.5">
-                                    <input
-                                      type="number"
-                                      step="0.01"
-                                      min="0"
-                                      value={valorParcela ?? ''}
-                                      onChange={(e) => alterarValorParcelaIgreja(igreja.id, n, e.target.value)}
-                                      placeholder="0,00"
-                                      className="w-full px-2 py-1 border border-slate-300 rounded-lg text-[11px] bg-white focus:ring-2 focus:ring-emerald-500"
-                                    />
+                                    <div>
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={igreja[`parcela${n}Valor`] ?? ''}
+                                        onChange={(e) => alterarValorParcelaIgreja(igreja.id, n, e.target.value)}
+                                        placeholder={`Sugestão: ${formatarBRL(valorSugeridoParcela)}`}
+                                        className="w-full px-2 py-1 border border-slate-300 rounded-lg text-[11px] bg-white focus:ring-2 focus:ring-emerald-500"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => alterarValorParcelaIgreja(igreja.id, n, String(valorSugeridoParcela))}
+                                        className="mt-0.5 text-[9px] font-semibold text-emerald-700 hover:text-emerald-900 underline"
+                                      >
+                                        usar sugestão
+                                      </button>
+                                    </div>
                                     <input
                                       type="date"
                                       value={igreja[`parcela${n}DataPagamento`] || ''}
