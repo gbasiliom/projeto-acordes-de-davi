@@ -199,6 +199,13 @@ const INSTRUMENTOS = [
   { id: 'banda', nome: 'Turma de Banda', Icone: Users }
 ];
 
+// Funções possíveis de um integrante da Turma de Banda (aba "Banda", admin) — lista
+// fixa, editável aqui no código se precisar mudar. Guardada direto no documento do
+// POLO (não no cadastro do aluno) porque "polos" é de leitura pública no Firestore —
+// assim a lista aparece tanto no Portal do Aluno quanto no Portal da Igreja sem
+// precisar de nenhuma regra de segurança nova.
+const FUNCOES_BANDA = ['Vocal', 'Guitarra', 'Baixo', 'Bateria', 'Teclado', 'Backing Vocal', 'Outro'];
+
 // Nome "curto" de um instrumento (sem o "Turma de" na frente) a partir do id salvo no
 // cadastro/turma — usado em telas que só precisam mostrar "Violão"/"Bateria"/"Banda",
 // e sempre olhando a lista INSTRUMENTOS (nunca um if/else fixo), pra funcionar sozinho
@@ -333,6 +340,10 @@ export default function App() {
   const [vagasOcupadas, setVagasOcupadas] = useState([]);
   const [turmasCadastradas, setTurmasCadastradas] = useState([]);
   const [polosCadastrados, setPolosCadastrados] = useState([]);
+
+  // Formulário de "novo integrante" da aba Banda — um rascunho por polo (nome +
+  // função), só some/reseta depois de clicar em "Adicionar".
+  const [formNovoIntegranteBanda, setFormNovoIntegranteBanda] = useState({});
 
   // --- Gestão de horários (admin) ---
   const [novaTurma, setNovaTurma] = useState({ local: 'saoluiz', instrumento: 'violao', dia: '', inicio: '', fim: '', duracao: 40 });
@@ -1537,13 +1548,13 @@ export default function App() {
         const salvo = polosCadastrados.find(p => p.id === def.id);
         if (salvo?.removido) return null;
         return salvo
-          ? { id: def.id, nome: salvo.nome ?? def.nome, descricao: salvo.descricao ?? def.descricao, dataInicioAulas: salvo.dataInicioAulas ?? def.dataInicioAulas ?? '' }
-          : { ...def, dataInicioAulas: def.dataInicioAulas ?? '' };
+          ? { id: def.id, nome: salvo.nome ?? def.nome, descricao: salvo.descricao ?? def.descricao, dataInicioAulas: salvo.dataInicioAulas ?? def.dataInicioAulas ?? '', integrantesBanda: salvo.integrantesBanda ?? def.integrantesBanda ?? [] }
+          : { ...def, dataInicioAulas: def.dataInicioAulas ?? '', integrantesBanda: def.integrantesBanda ?? [] };
       })
       .filter(Boolean),
     ...polosCadastrados
       .filter(p => !idsPadrao.has(p.id) && !p.removido)
-      .map(p => ({ id: p.id, nome: p.nome, descricao: p.descricao, dataInicioAulas: p.dataInicioAulas ?? '' }))
+      .map(p => ({ id: p.id, nome: p.nome, descricao: p.descricao, dataInicioAulas: p.dataInicioAulas ?? '', integrantesBanda: p.integrantesBanda ?? [] }))
   ];
 
   // Cria um novo polo (local de ensino) — só o admin consegue (regra do Firestore).
@@ -1648,6 +1659,50 @@ export default function App() {
     } catch (err) {
       console.error('Erro ao restaurar polos padrão:', err);
       alert('Erro ao restaurar os polos padrão.');
+    }
+  };
+
+  // --- Integrantes da Turma de Banda (aba "Banda") ---
+  // Guardados como um array direto no documento do POLO ("integrantesBanda"), não no
+  // cadastro do aluno — é uma lista de gestão própria (nome + função), separada do
+  // cadastro normal, e assim aparece de graça no Portal do Aluno e no Portal da Igreja
+  // sem precisar de nenhuma regra nova do Firestore (polos já é público pra leitura).
+  // O Firestore não permite atualizar só 1 item de dentro de um array — por isso toda
+  // alteração reescreve o array inteiro (usando o que já está carregado no estado).
+  const adicionarIntegranteBanda = async (poloId, nome, funcao) => {
+    const nomeLimpo = (nome || '').trim();
+    if (!nomeLimpo) {
+      alert('Digite o nome do integrante antes de adicionar.');
+      return;
+    }
+    const atual = LOCALIZACOES.find(l => l.id === poloId)?.integrantesBanda || [];
+    const novoIntegrante = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, nome: nomeLimpo, funcao: funcao || FUNCOES_BANDA[0] };
+    try {
+      await setDoc(doc(db, 'polos', poloId), { integrantesBanda: [...atual, novoIntegrante] }, { merge: true });
+    } catch (err) {
+      console.error('Erro ao adicionar integrante da banda:', err);
+      alert('Erro ao adicionar esse integrante.');
+    }
+  };
+
+  const alterarIntegranteBanda = async (poloId, integranteId, campo, valor) => {
+    const atual = LOCALIZACOES.find(l => l.id === poloId)?.integrantesBanda || [];
+    const atualizado = atual.map(integrante => integrante.id === integranteId ? { ...integrante, [campo]: valor } : integrante);
+    try {
+      await setDoc(doc(db, 'polos', poloId), { integrantesBanda: atualizado }, { merge: true });
+    } catch (err) {
+      console.error('Erro ao alterar integrante da banda:', err);
+      alert('Erro ao salvar essa alteração.');
+    }
+  };
+
+  const removerIntegranteBanda = async (poloId, integranteId) => {
+    const atual = LOCALIZACOES.find(l => l.id === poloId)?.integrantesBanda || [];
+    try {
+      await setDoc(doc(db, 'polos', poloId), { integrantesBanda: atual.filter(integrante => integrante.id !== integranteId) }, { merge: true });
+    } catch (err) {
+      console.error('Erro ao remover integrante da banda:', err);
+      alert('Erro ao remover esse integrante.');
     }
   };
 
@@ -2385,6 +2440,12 @@ export default function App() {
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'vagas' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
                 >
                   <ClipboardList className="w-4 h-4" /> Vagas
+                </button>
+                <button
+                  onClick={() => setAbaAtiva('banda')}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'banda' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                >
+                  <Users className="w-4 h-4" /> Banda
                 </button>
                 <button
                   onClick={() => setAbaAtiva('financeiro')}
@@ -3978,6 +4039,94 @@ export default function App() {
           </div>
         )}
 
+        {abaAtiva === 'banda' && (
+          <div className="space-y-6 max-w-4xl mx-auto">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <Users className="w-6 h-6 text-emerald-600" /> Integrantes da Banda
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Lista de gestão própria (nome + função) por polo — aparece também no Portal do Aluno e no Portal da Igreja daquele polo. Não precisa ter cadastro de aluno pra entrar aqui.
+              </p>
+            </div>
+
+            {LOCALIZACOES.map((polo) => {
+              const integrantes = polo.integrantesBanda || [];
+              const rascunho = formNovoIntegranteBanda[polo.id] || { nome: '', funcao: FUNCOES_BANDA[0] };
+              return (
+                <div key={polo.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                  <div className="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
+                    <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-emerald-600" /> {polo.nome}
+                    </h3>
+                    <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-slate-100 text-slate-500">
+                      {integrantes.length} integrante{integrantes.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+
+                  {integrantes.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic mb-4">Nenhum integrante cadastrado nesse polo ainda.</p>
+                  ) : (
+                    <div className="space-y-2 mb-4">
+                      {integrantes.map((integrante) => (
+                        <div key={integrante.id} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-2.5 rounded-lg border border-slate-200 bg-slate-50">
+                          <input
+                            type="text"
+                            value={integrante.nome}
+                            onChange={(e) => alterarIntegranteBanda(polo.id, integrante.id, 'nome', e.target.value)}
+                            className="flex-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                          />
+                          <select
+                            value={integrante.funcao}
+                            onChange={(e) => alterarIntegranteBanda(polo.id, integrante.id, 'funcao', e.target.value)}
+                            className="px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                          >
+                            {FUNCOES_BANDA.map((f) => <option key={f} value={f}>{f}</option>)}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => removerIntegranteBanda(polo.id, integrante.id)}
+                            className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center justify-center gap-1 shrink-0"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Remover
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-3 border-t border-slate-100">
+                    <input
+                      type="text"
+                      value={rascunho.nome}
+                      onChange={(e) => setFormNovoIntegranteBanda({ ...formNovoIntegranteBanda, [polo.id]: { ...rascunho, nome: e.target.value } })}
+                      placeholder="Nome do novo integrante"
+                      className="flex-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <select
+                      value={rascunho.funcao}
+                      onChange={(e) => setFormNovoIntegranteBanda({ ...formNovoIntegranteBanda, [polo.id]: { ...rascunho, funcao: e.target.value } })}
+                      className="px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                    >
+                      {FUNCOES_BANDA.map((f) => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        adicionarIntegranteBanda(polo.id, rascunho.nome, rascunho.funcao);
+                        setFormNovoIntegranteBanda({ ...formNovoIntegranteBanda, [polo.id]: { nome: '', funcao: FUNCOES_BANDA[0] } });
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-lg text-sm font-bold transition inline-flex items-center justify-center gap-1.5 shrink-0"
+                    >
+                      <PlusCircle className="w-4 h-4" /> Adicionar
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {abaAtiva === 'financeiro' && (
           <div className="space-y-6 max-w-4xl mx-auto">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
@@ -5131,6 +5280,26 @@ export default function App() {
                     })()}
                   </div>
                 </div>
+
+                {(() => {
+                  const integrantes = LOCALIZACOES.find(l => l.id === meusAgendamentos[0]?.local)?.integrantesBanda || [];
+                  if (integrantes.length === 0) return null;
+                  return (
+                    <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
+                      <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 border-b border-slate-100 pb-3">
+                        <Users className="w-5 h-5 text-emerald-600" /> Integrantes da Banda
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {integrantes.map((integrante) => (
+                          <div key={integrante.id} className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-slate-200 bg-slate-50">
+                            <span className="text-sm font-medium text-slate-700">{integrante.nome}</span>
+                            <span className="text-xs font-semibold uppercase text-emerald-700">{integrante.funcao}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
                 </>
               )}
             </div>
@@ -5261,6 +5430,26 @@ export default function App() {
                     </button>
                   )}
                 </div>
+
+                {(() => {
+                  const integrantes = LOCALIZACOES.find(l => l.id === minhaIgreja.poloId)?.integrantesBanda || [];
+                  if (integrantes.length === 0) return null;
+                  return (
+                    <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
+                      <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 border-b border-slate-100 pb-3">
+                        <Users className="w-5 h-5 text-emerald-600" /> Integrantes da Banda
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {integrantes.map((integrante) => (
+                          <div key={integrante.id} className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-slate-200 bg-slate-50">
+                            <span className="text-sm font-medium text-slate-700">{integrante.nome}</span>
+                            <span className="text-xs font-semibold uppercase text-emerald-700">{integrante.funcao}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
                   <h3 className="text-lg font-bold text-slate-800 mb-1 flex items-center gap-2 border-b border-slate-100 pb-3">
