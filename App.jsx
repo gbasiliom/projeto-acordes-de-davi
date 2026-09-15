@@ -3612,6 +3612,18 @@ export default function App() {
             </div>
 
             {emitirCertificado && alunoCertificado && (
+              <>
+                {/* Botão fora do cartão do certificado, de propósito — assim ele nunca aparece
+                    dentro da área impressa/exportada (mesmo ajuste feito no cartão do recibo). */}
+                <div className="max-w-4xl mx-auto flex justify-end print:hidden">
+                  <button
+                    onClick={() => window.print()}
+                    className="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
+                  >
+                    <Printer className="w-4 h-4" /> Imprimir / Salvar PDF
+                  </button>
+                </div>
+
               <div className="bg-white border-8 border-double border-emerald-800 p-8 sm:p-12 rounded-2xl shadow-xl max-w-4xl mx-auto text-center relative overflow-hidden print:shadow-none print:border-8">
                 {/* Marca d'água — logo bem clarinha atrás do conteúdo, some das telas de edição, mas fica na impressão/PDF */}
                 <img
@@ -3622,15 +3634,6 @@ export default function App() {
                 />
 
                 <div className="relative z-10">
-                  <div className="absolute top-4 right-4 print:hidden">
-                    <button
-                      onClick={() => window.print()}
-                      className="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
-                    >
-                      <Printer className="w-4 h-4" /> Imprimir / Salvar PDF
-                    </button>
-                  </div>
-
                   <div className="mb-6">
                     <img src="/logo-acordes-de-davi.svg" alt="Logo Acordes de Davi" className="w-16 h-16 mx-auto mb-2" />
                     <h1 className="text-2xl sm:text-3xl font-serif font-bold text-emerald-900 uppercase tracking-widest">Projeto Acordes de Davi</h1>
@@ -3663,6 +3666,7 @@ export default function App() {
                   </div>
                 </div>
               </div>
+              </>
             )}
           </div>
         )}
@@ -5637,10 +5641,38 @@ export default function App() {
           nada, porque esse bloco só existia dentro da aba Pagamentos (admin). Agora aparece
           por cima de qualquer tela, pra qualquer um dos três papéis. */}
       {itemRecibo && (
-        <div className="fixed inset-0 z-[999] bg-slate-900/60 flex items-center justify-center p-4 overflow-y-auto print:bg-white print:p-0 print:static">
+        <div className="fixed inset-0 z-[999] bg-slate-900/60 flex flex-col items-center p-4 overflow-y-auto print:bg-white print:p-0 print:static">
+          {/* Barra de botões — de propósito FORA do cartão (fora da div com ref={reciboRef}),
+              porque o html2canvas (usado em "Baixar PDF") tira uma "foto" exata do que está
+              dentro dessa div, sem respeitar a classe "print:hidden" (que só funciona pra
+              impressão/"Salvar como PDF" do navegador, não pra essa foto). Deixando os botões
+              fora da área fotografada/impressa, eles nunca aparecem no recibo gerado, por
+              nenhum dos dois caminhos. */}
+          <div className="max-w-2xl w-full flex flex-wrap justify-end gap-2 mb-3 mt-2 print:hidden">
+            <button
+              onClick={baixarPdfRecibo}
+              disabled={gerandoPdfRecibo}
+              className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
+            >
+              <Download className="w-4 h-4" /> {gerandoPdfRecibo ? 'Gerando PDF...' : 'Baixar PDF'}
+            </button>
+            <button
+              onClick={() => window.print()}
+              className="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
+            >
+              <Printer className="w-4 h-4" /> Imprimir
+            </button>
+            <button
+              onClick={() => setItemRecibo(null)}
+              className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition"
+            >
+              Fechar
+            </button>
+          </div>
+
           <div
             ref={reciboRef}
-            className="bg-white border-8 border-double border-emerald-800 p-8 sm:p-12 rounded-2xl shadow-xl max-w-2xl w-full mx-auto text-center relative overflow-hidden print:shadow-none print:border-8 my-8"
+            className="bg-white border-8 border-double border-emerald-800 p-8 sm:p-12 rounded-2xl shadow-xl max-w-2xl w-full mx-auto text-center relative overflow-hidden print:shadow-none print:border-8 mb-8"
           >
             {/* Marca d'água — logo bem clarinha atrás do conteúdo, some das telas de edição, mas fica na impressão/PDF */}
             <img
@@ -5651,28 +5683,6 @@ export default function App() {
             />
 
             <div className="relative z-10">
-              <div className="absolute top-4 right-4 print:hidden flex flex-wrap justify-end gap-2">
-                <button
-                  onClick={baixarPdfRecibo}
-                  disabled={gerandoPdfRecibo}
-                  className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
-                >
-                  <Download className="w-4 h-4" /> {gerandoPdfRecibo ? 'Gerando PDF...' : 'Baixar PDF'}
-                </button>
-                <button
-                  onClick={() => window.print()}
-                  className="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
-                >
-                  <Printer className="w-4 h-4" /> Imprimir
-                </button>
-                <button
-                  onClick={() => setItemRecibo(null)}
-                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition"
-                >
-                  Fechar
-                </button>
-              </div>
-
               <div className="mb-6">
                 <img src="/logo-acordes-de-davi.svg" alt="Logo Acordes de Davi" className="w-14 h-14 mx-auto mb-2" />
                 <h1 className="text-xl sm:text-2xl font-serif font-bold text-emerald-900 uppercase tracking-widest">Projeto Acordes de Davi</h1>
