@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil, ClipboardList, TrendingUp } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserSessionPersistence } from 'firebase/auth';
@@ -344,6 +344,14 @@ export default function App() {
   // Formulário de "novo integrante" da aba Banda — um rascunho por polo (nome +
   // função), só some/reseta depois de clicar em "Adicionar".
   const [formNovoIntegranteBanda, setFormNovoIntegranteBanda] = useState({});
+
+  // Vinheta de abertura (logo animado) — aparece por cima de tudo, toda vez que o
+  // site é aberto (recarregar a página conta como "abrir de novo"), antes de
+  // qualquer tela (login, cadastro, portal). Começa mudo de propósito: o navegador
+  // bloqueia autoplay COM som sem um clique antes — daí o botão de "ativar som".
+  const [mostrarVinheta, setMostrarVinheta] = useState(true);
+  const [somVinhetaAtivado, setSomVinhetaAtivado] = useState(false);
+  const videoVinhetaRef = useRef(null);
 
   // --- Gestão de horários (admin) ---
   const [novaTurma, setNovaTurma] = useState({ local: 'saoluiz', instrumento: 'violao', dia: '', inicio: '', fim: '', duracao: 40 });
@@ -2385,6 +2393,39 @@ export default function App() {
   );
 
   return (
+    <>
+      {mostrarVinheta && (
+        <div className="fixed inset-0 z-[9999] bg-black flex items-center justify-center">
+          <video
+            ref={videoVinhetaRef}
+            src="/vinheta-logo.mp4"
+            autoPlay
+            muted
+            playsInline
+            onEnded={() => setMostrarVinheta(false)}
+            className="w-full h-full object-contain"
+          />
+          <button
+            type="button"
+            onClick={() => setMostrarVinheta(false)}
+            className="absolute top-4 right-4 sm:top-6 sm:right-6 bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm font-semibold px-3 py-1.5 rounded-full border border-white/30 transition backdrop-blur-sm"
+          >
+            Pular ›
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (videoVinhetaRef.current) {
+                videoVinhetaRef.current.muted = somVinhetaAtivado;
+              }
+              setSomVinhetaAtivado(!somVinhetaAtivado);
+            }}
+            className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm font-semibold px-3 py-1.5 rounded-full border border-white/30 transition backdrop-blur-sm"
+          >
+            {somVinhetaAtivado ? '🔊 Som ativado' : '🔇 Ativar som'}
+          </button>
+        </div>
+      )}
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
       <header className="bg-emerald-800 text-white shadow-md print:hidden">
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-2">
@@ -5635,5 +5676,6 @@ export default function App() {
         Projeto Acordes de Davi &bull; Sistema Integrado com Firebase
       </footer>
     </div>
+    </>
   );
 }
