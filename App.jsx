@@ -347,12 +347,27 @@ export default function App() {
   // função), só some/reseta depois de clicar em "Adicionar".
   const [formNovoIntegranteBanda, setFormNovoIntegranteBanda] = useState({});
 
-  // Vinheta de abertura (logo animado) — aparece por cima de tudo, toda vez que o
-  // site é aberto (recarregar a página conta como "abrir de novo"), antes de
-  // qualquer tela (login, cadastro, portal).
-  const [mostrarVinheta, setMostrarVinheta] = useState(true);
+  // Vinheta de abertura (logo animado) — aparece por cima de tudo, antes de qualquer
+  // tela (login, cadastro, portal), mas só UMA VEZ POR DIA por aparelho/navegador —
+  // guarda a data em que apareceu no localStorage (só existe nesse navegador, não
+  // sincroniza entre aparelhos) e, se já mostrou hoje, pula direto pro site.
+  const [mostrarVinheta, setMostrarVinheta] = useState(() => {
+    try {
+      const hoje = new Date().toDateString();
+      return localStorage.getItem('vinhetaVistaEm') !== hoje;
+    } catch (err) {
+      return true; // não deu pra checar (ex.: navegador bloqueando localStorage) — mostra normalmente
+    }
+  });
   const [somVinhetaAtivado, setSomVinhetaAtivado] = useState(false);
   const videoVinhetaRef = useRef(null);
+
+  // Marca "já mostrou hoje" no momento em que decide mostrar — mesmo que a pessoa
+  // pule (clique em "Pular") antes do vídeo acabar, já contou como "viu hoje".
+  useEffect(() => {
+    if (!mostrarVinheta) return;
+    try { localStorage.setItem('vinhetaVistaEm', new Date().toDateString()); } catch (err) { /* localStorage bloqueado — sem problema, só volta a mostrar toda vez */ }
+  }, []);
 
   // Tenta tocar COM som direto, sem esperar clique — funciona sozinho em boa parte
   // dos navegadores/situações (o Chrome, por exemplo, libera autoplay com som pra
@@ -417,6 +432,10 @@ export default function App() {
   // controle fiscal. Fica salvo num único documento no Firestore
   // (configuracoes/proprietario) e é editável só por você, na aba Configurações.
   const [dadosProprietario, setDadosProprietario] = useState({ nome: '', cpf: '', endereco: '' });
+  // Vira true assim que a PRIMEIRA resposta do Firestore pra esses dados chega (com ou
+  // sem dados salvos) — usado pra saber quando é seguro gerar o PDF do recibo sem
+  // arriscar pegar esse bloco ainda vazio (ver useEffect de baixarPdfRecibo).
+  const [proprietarioCarregado, setProprietarioCarregado] = useState(false);
   const [formProprietario, setFormProprietario] = useState({ nome: '', cpf: '', endereco: '' });
   const [salvandoProprietario, setSalvandoProprietario] = useState(false);
   const [mensagemProprietario, setMensagemProprietario] = useState('');
@@ -560,8 +579,10 @@ export default function App() {
         const dados = snap.data();
         setDadosProprietario({ nome: dados.nome || '', cpf: dados.cpf || '', endereco: dados.endereco || '' });
       }
+      setProprietarioCarregado(true);
     }, (error) => {
       console.error("Erro ao buscar dados do proprietário:", error);
+      setProprietarioCarregado(true);
     });
 
     return () => {
@@ -1151,9 +1172,21 @@ export default function App() {
       const canvas = await html2canvas(reciboRef.current, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
       const imagem = canvas.toDataURL('image/png');
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      const larguraPagina = pdf.internal.pageSize.getWidth();
-      const alturaImagem = (canvas.height * larguraPagina) / canvas.width;
-      pdf.addImage(imagem, 'PNG', 0, 0, larguraPagina, alturaImagem);
+      // Encaixa a "foto" do recibo INTEIRA dentro de uma página só, com uma margem —
+      // em vez de esticar pra largura total (o que fazia o final do recibo passar do
+      // fim da página e ficar cortado quando o conteúdo era mais alto que uma A4).
+      const margemMm = 8;
+      const larguraDisponivel = pdf.internal.pageSize.getWidth() - margemMm * 2;
+      const alturaDisponivel = pdf.internal.pageSize.getHeight() - margemMm * 2;
+      const proporcao = canvas.width / canvas.height;
+      let larguraFinal = larguraDisponivel;
+      let alturaFinal = larguraFinal / proporcao;
+      if (alturaFinal > alturaDisponivel) {
+        alturaFinal = alturaDisponivel;
+        larguraFinal = alturaFinal * proporcao;
+      }
+      const x = (pdf.internal.pageSize.getWidth() - larguraFinal) / 2;
+      pdf.addImage(imagem, 'PNG', x, margemMm, larguraFinal, alturaFinal);
       const nomeArquivo = `recibo-${(itemRecibo?.nome || 'acordes-de-davi').toLowerCase().replace(/[^a-z0-9]+/g, '-')}.pdf`;
       pdf.save(nomeArquivo);
     } catch (err) {
@@ -1167,13 +1200,16 @@ export default function App() {
   // Aluno e igreja pedindo o recibo NO PRÓPRIO portal: baixa o PDF sozinho, sem
   // precisar clicar em "Baixar PDF" — é o "gerar imediatamente" que foi pedido pra
   // esses dois papéis (o admin continua podendo editar quantidade/valor antes, e só
-  // baixa clicando). Espera um instante pro cartão do recibo (com a logo) terminar de
-  // aparecer na tela antes de tirar a "foto" dele.
+  // baixa clicando). Espera os dados do emissor (aba Configurações) já terem
+  // chegado do Firestore ANTES de tirar a "foto" — sem isso, a primeira vez que a
+  // pessoa abre o portal (antes desses dados carregarem) o PDF saía sem o bloco
+  // "Emitido por", e só aparecia certo depois de atualizar a página (quando esses
+  // dados já estavam em cache local).
   useEffect(() => {
-    if (!itemRecibo || souAdmin) return;
+    if (!itemRecibo || souAdmin || !proprietarioCarregado) return;
     const tempo = setTimeout(() => { baixarPdfRecibo(); }, 400);
     return () => clearTimeout(tempo);
-  }, [itemRecibo, souAdmin]);
+  }, [itemRecibo, souAdmin, proprietarioCarregado]);
 
   // Salva o cadastro do proprietário/emissor (aba Configurações) — nome, CPF e
   // endereço que passam a aparecer no recibo, pra você poder usar ele pra
