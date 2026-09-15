@@ -347,11 +347,36 @@ export default function App() {
 
   // Vinheta de abertura (logo animado) — aparece por cima de tudo, toda vez que o
   // site é aberto (recarregar a página conta como "abrir de novo"), antes de
-  // qualquer tela (login, cadastro, portal). Começa mudo de propósito: o navegador
-  // bloqueia autoplay COM som sem um clique antes — daí o botão de "ativar som".
+  // qualquer tela (login, cadastro, portal).
   const [mostrarVinheta, setMostrarVinheta] = useState(true);
   const [somVinhetaAtivado, setSomVinhetaAtivado] = useState(false);
   const videoVinhetaRef = useRef(null);
+
+  // Tenta tocar COM som direto, sem esperar clique — funciona sozinho em boa parte
+  // dos navegadores/situações (o Chrome, por exemplo, libera autoplay com som pra
+  // quem já assistiu vídeo com som nesse site antes). Isso NÃO é algo que o código
+  // decide: é uma política de segurança do próprio navegador contra vídeo/anúncio
+  // abrindo com som sem a pessoa pedir — o que der pra fazer daqui é tentar primeiro
+  // com som e, só se o navegador recusar (a Promise de video.play() é rejeitada),
+  // cair pro mudo automaticamente com o botão "Ativar som" à mostra (e um toque em
+  // qualquer parte do vídeo também ativa o som, já que um clique da pessoa sempre é
+  // permitido).
+  useEffect(() => {
+    if (!mostrarVinheta) return;
+    const video = videoVinhetaRef.current;
+    if (!video) return;
+    video.muted = false;
+    const tentativa = video.play();
+    if (tentativa && typeof tentativa.then === 'function') {
+      tentativa
+        .then(() => setSomVinhetaAtivado(true))
+        .catch(() => {
+          video.muted = true;
+          setSomVinhetaAtivado(false);
+          video.play().catch(() => {});
+        });
+    }
+  }, [mostrarVinheta]);
 
   // --- Gestão de horários (admin) ---
   const [novaTurma, setNovaTurma] = useState({ local: 'saoluiz', instrumento: 'violao', dia: '', inicio: '', fim: '', duracao: 40 });
@@ -2399,10 +2424,17 @@ export default function App() {
           <video
             ref={videoVinhetaRef}
             src="/vinheta-logo.mp4"
-            autoPlay
-            muted
             playsInline
             onEnded={() => setMostrarVinheta(false)}
+            onClick={() => {
+              // Tocar em qualquer parte do vídeo também ativa o som — um clique
+              // direto da pessoa sempre é permitido pelo navegador, mesmo quando
+              // o autoplay com som (tentado sozinho no useEffect) foi bloqueado.
+              if (videoVinhetaRef.current && videoVinhetaRef.current.muted) {
+                videoVinhetaRef.current.muted = false;
+                setSomVinhetaAtivado(true);
+              }
+            }}
             className="w-full h-full object-contain"
           />
           <button
@@ -2412,18 +2444,20 @@ export default function App() {
           >
             Pular ›
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (videoVinhetaRef.current) {
-                videoVinhetaRef.current.muted = somVinhetaAtivado;
-              }
-              setSomVinhetaAtivado(!somVinhetaAtivado);
-            }}
-            className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm font-semibold px-3 py-1.5 rounded-full border border-white/30 transition backdrop-blur-sm"
-          >
-            {somVinhetaAtivado ? '🔊 Som ativado' : '🔇 Ativar som'}
-          </button>
+          {!somVinhetaAtivado && (
+            <button
+              type="button"
+              onClick={() => {
+                if (videoVinhetaRef.current) {
+                  videoVinhetaRef.current.muted = false;
+                }
+                setSomVinhetaAtivado(true);
+              }}
+              className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm font-semibold px-3 py-1.5 rounded-full border border-white/30 transition backdrop-blur-sm animate-pulse"
+            >
+              🔇 Ativar som
+            </button>
+          )}
         </div>
       )}
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
@@ -3291,8 +3325,22 @@ export default function App() {
                                 key={item.id}
                                 className="flex items-center justify-between gap-2 text-xs text-slate-700 bg-white border border-slate-200 rounded-lg px-2.5 py-1"
                               >
-                                <span className="truncate">{item.nome}</span>
-                                <span className="text-[10px] text-slate-400 capitalize shrink-0">{item.instrumento}</span>
+                                <div className="min-w-0 truncate">
+                                  <span className="truncate">{item.nome}</span>
+                                  <span className="text-[10px] text-slate-400 capitalize ml-1">({item.instrumento})</span>
+                                </div>
+                                {/* Volta a aparecer também do lado "Individual" (era só nesse
+                                    outro grupo antes) — sem isso não tinha como tirar um
+                                    aluno específico do pacote sem editar direto no Firestore. */}
+                                <select
+                                  value={item.tipoPagamento || 'pacote'}
+                                  onChange={(e) => alterarTipoPagamento(item.id, e.target.value)}
+                                  title="Tipo de pagamento desse aluno"
+                                  className="shrink-0 px-1.5 py-1 border border-slate-300 rounded text-[10px] bg-white focus:ring-2 focus:ring-emerald-500"
+                                >
+                                  <option value="pacote">Pacote</option>
+                                  <option value="individual">Individual</option>
+                                </select>
                               </li>
                             ))}
                           </ul>
