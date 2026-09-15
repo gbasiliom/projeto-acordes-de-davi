@@ -3,6 +3,8 @@ import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCir
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserSessionPersistence } from 'firebase/auth';
 import { getFirestore, collection, query, where, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 // E-mail que tem acesso de administrador. Todo outro login vira "aluno".
 const ADMIN_EMAIL = 'auladeinstrumentosmusicais2026@gmail.com';
@@ -448,6 +450,8 @@ export default function App() {
   const [itemRecibo, setItemRecibo] = useState(null);
   const [quantidadeAulasRecibo, setQuantidadeAulasRecibo] = useState(1);
   const [valorRecibo, setValorRecibo] = useState('');
+  const [gerandoPdfRecibo, setGerandoPdfRecibo] = useState(false);
+  const reciboRef = useRef(null);
 
   // --- Pagamento via Pix, direto no site (Mercado Pago) ---
   const [pixEmAndamento, setPixEmAndamento] = useState(null); // id do agendamento com Pix aberto
@@ -1133,6 +1137,43 @@ export default function App() {
       valorCombinado: igreja.valorCombinado
     });
   };
+
+  // Transforma o cartão do recibo (a mesma div que aparece na tela) numa imagem
+  // (html2canvas) e encaixa essa imagem dentro de um PDF A4 (jsPDF) — assim o PDF
+  // sai idêntico ao que já aparece na tela, sem ter que redesenhar o recibo numa
+  // biblioteca de PDF diferente. Baixa direto no dispositivo de quem clicou (não
+  // manda pra nenhum servidor) — é só isso que dá pra fazer sem envio por e-mail
+  // (que precisa de um serviço de e-mail configurado, combinado de deixar pra depois).
+  const baixarPdfRecibo = async () => {
+    if (!reciboRef.current) return;
+    setGerandoPdfRecibo(true);
+    try {
+      const canvas = await html2canvas(reciboRef.current, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+      const imagem = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const larguraPagina = pdf.internal.pageSize.getWidth();
+      const alturaImagem = (canvas.height * larguraPagina) / canvas.width;
+      pdf.addImage(imagem, 'PNG', 0, 0, larguraPagina, alturaImagem);
+      const nomeArquivo = `recibo-${(itemRecibo?.nome || 'acordes-de-davi').toLowerCase().replace(/[^a-z0-9]+/g, '-')}.pdf`;
+      pdf.save(nomeArquivo);
+    } catch (err) {
+      console.error('Erro ao gerar o PDF do recibo:', err);
+      alert('Não foi possível gerar o PDF agora. Tente de novo, ou use "Imprimir / Salvar PDF".');
+    } finally {
+      setGerandoPdfRecibo(false);
+    }
+  };
+
+  // Aluno e igreja pedindo o recibo NO PRÓPRIO portal: baixa o PDF sozinho, sem
+  // precisar clicar em "Baixar PDF" — é o "gerar imediatamente" que foi pedido pra
+  // esses dois papéis (o admin continua podendo editar quantidade/valor antes, e só
+  // baixa clicando). Espera um instante pro cartão do recibo (com a logo) terminar de
+  // aparecer na tela antes de tirar a "foto" dele.
+  useEffect(() => {
+    if (!itemRecibo || souAdmin) return;
+    const tempo = setTimeout(() => { baixarPdfRecibo(); }, 400);
+    return () => clearTimeout(tempo);
+  }, [itemRecibo, souAdmin]);
 
   // Salva o cadastro do proprietário/emissor (aba Configurações) — nome, CPF e
   // endereço que passam a aparecer no recibo, pra você poder usar ele pra
@@ -3513,136 +3554,6 @@ export default function App() {
                 .filter(item => (filtroLocalPagamentos === 'todos' || item.local === filtroLocalPagamentos) && (item.tipoPagamento || 'pacote') === 'individual')
                 .map((item) => renderCardPagamento(item))}
             </div>
-
-            {itemRecibo && (
-              <div className="bg-white border-8 border-double border-emerald-800 p-8 sm:p-12 rounded-2xl shadow-xl max-w-2xl mx-auto text-center relative overflow-hidden print:shadow-none print:border-8">
-                {/* Marca d'água — logo bem clarinha atrás do conteúdo, some das telas de edição, mas fica na impressão/PDF */}
-                <img
-                  src="/logo-acordes-de-davi.svg"
-                  alt=""
-                  aria-hidden="true"
-                  className="absolute inset-0 m-auto w-2/3 max-w-xs opacity-[0.16] pointer-events-none select-none"
-                />
-
-                <div className="relative z-10">
-                  <div className="absolute top-4 right-4 print:hidden flex gap-2">
-                    <button
-                      onClick={() => window.print()}
-                      className="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
-                    >
-                      <Printer className="w-4 h-4" /> Imprimir / Salvar PDF
-                    </button>
-                    <button
-                      onClick={() => setItemRecibo(null)}
-                      className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition"
-                    >
-                      Fechar
-                    </button>
-                  </div>
-
-                  <div className="mb-6">
-                    <img src="/logo-acordes-de-davi.svg" alt="Logo Acordes de Davi" className="w-14 h-14 mx-auto mb-2" />
-                    <h1 className="text-xl sm:text-2xl font-serif font-bold text-emerald-900 uppercase tracking-widest">Projeto Acordes de Davi</h1>
-                    <p className="text-xs uppercase tracking-widest text-emerald-600 font-semibold mt-1">A Música Transforma Vidas</p>
-                  </div>
-
-                  <h2 className="text-3xl font-serif font-bold text-slate-800 tracking-wide mb-6">Recibo de Pagamento</h2>
-
-                  <div className="text-left space-y-1.5 text-sm text-slate-700 mb-6">
-                    <p>
-                      <span className="font-semibold text-slate-800">{itemRecibo.origem === 'igreja' ? 'Igreja mantenedora:' : 'Aluno(a):'}</span>{' '}
-                      {itemRecibo.nome}
-                    </p>
-                    <p><span className="font-semibold text-slate-800">Polo:</span> {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}</p>
-                    {itemRecibo.instrumento && (
-                      <p><span className="font-semibold text-slate-800">Instrumento:</span> {itemRecibo.instrumento}</p>
-                    )}
-                    <p>
-                      <span className="font-semibold text-slate-800">Tipo de cobrança:</span>{' '}
-                      {itemRecibo.tipoPagamento === 'individual'
-                        ? `Individual (${quantidadeAulasRecibo} aula${quantidadeAulasRecibo > 1 ? 's' : ''})`
-                        : 'Pacote'}
-                    </p>
-                    <p>
-                      <span className="font-semibold text-slate-800">Forma de pagamento:</span>{' '}
-                      {itemRecibo.formaPagamento === 'pix' ? 'Pix' : itemRecibo.formaPagamento === 'dinheiro' ? 'Dinheiro' : 'Outro'}
-                    </p>
-                    <p>
-                      <span className="font-semibold text-slate-800">Data do pagamento:</span>{' '}
-                      {itemRecibo.dataPagamento ? new Date(itemRecibo.dataPagamento + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
-                    </p>
-                  </div>
-
-                  {itemRecibo.tipoPagamento === 'individual' && (
-                    <div className="mb-4 print:hidden flex items-center justify-center gap-2">
-                      <label className="text-xs font-semibold text-slate-600 uppercase">Quantidade de aulas</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={quantidadeAulasRecibo}
-                        onChange={(e) => {
-                          const qtd = Math.max(1, Number(e.target.value) || 1);
-                          setQuantidadeAulasRecibo(qtd);
-                          setValorRecibo(String(valorSugeridoRecibo(itemRecibo, LOCALIZACOES.find(l => l.id === itemRecibo.local), qtd)));
-                        }}
-                        className="w-20 px-2 py-1.5 border border-slate-300 rounded-lg text-sm text-center"
-                      />
-                    </div>
-                  )}
-
-                  <div className="mb-6 print:hidden flex items-center justify-center gap-2">
-                    <label className="text-xs font-semibold text-slate-600 uppercase">Valor (editável)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={valorRecibo}
-                      onChange={(e) => setValorRecibo(e.target.value)}
-                      className="w-32 px-2 py-1.5 border border-slate-300 rounded-lg text-sm text-center"
-                    />
-                  </div>
-
-                  <p className="text-4xl font-bold text-emerald-900 border-t-2 border-b-2 border-emerald-600 py-4 mb-6">
-                    {formatarBRL(valorRecibo)}
-                  </p>
-
-                  <p className="text-sm text-slate-700 max-w-xl mx-auto leading-relaxed mb-8">
-                    Recebemos de <strong className="text-emerald-900">{itemRecibo.nome}</strong> o valor acima referente ao pagamento{' '}
-                    {itemRecibo.instrumento ? `das aulas de ${itemRecibo.instrumento}` : 'do pacote de aulas'} no Projeto Acordes de Davi, polo{' '}
-                    {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}.
-                  </p>
-
-                  {itemRecibo.origem === 'igreja' && (
-                    <div className="text-left max-w-xl mx-auto mb-8">
-                      <p className="text-xs font-semibold text-slate-800 uppercase tracking-wide mb-2 border-b border-slate-200 pb-1">
-                        Alunos atendidos por esse pacote
-                      </p>
-                      <ul className="text-sm text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5 list-disc list-inside">
-                        {agendamentos.filter(a => a.local === itemRecibo.local).map((a) => (
-                          <li key={a.id}>
-                            {a.nome} <span className="text-xs text-slate-500 capitalize">— {a.instrumento}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {dadosProprietario.nome && (
-                    <div className="text-left max-w-xl mx-auto mb-2 text-[11px] text-slate-600 leading-relaxed">
-                      <p className="font-semibold text-slate-700 uppercase tracking-wide text-[10px] mb-0.5">Emitido por</p>
-                      <p>{dadosProprietario.nome}{dadosProprietario.cpf ? ` — CPF/CNPJ: ${dadosProprietario.cpf}` : ''}</p>
-                      {dadosProprietario.endereco && <p>{dadosProprietario.endereco}</p>}
-                    </div>
-                  )}
-
-                  <div className="mt-10 pt-6 border-t border-slate-300 text-xs text-slate-600">
-                    <div className="border-b border-slate-400 w-56 mb-1 mx-auto"></div>
-                    <p className="font-bold text-slate-800">Coordenação do Projeto</p>
-                    <p className="text-slate-500">Recibo emitido em: {new Date().toLocaleDateString('pt-BR')}</p>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -5719,6 +5630,161 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Cartão do recibo — fica FORA de qualquer aba (não é mais só dentro de "pagamentos"),
+          porque abrirRecibo/abrirReciboIgreja também são chamados do Portal do Aluno e do
+          Portal da Igreja: antes, pedir o recibo por ali guardava o item mas não mostrava
+          nada, porque esse bloco só existia dentro da aba Pagamentos (admin). Agora aparece
+          por cima de qualquer tela, pra qualquer um dos três papéis. */}
+      {itemRecibo && (
+        <div className="fixed inset-0 z-[999] bg-slate-900/60 flex items-center justify-center p-4 overflow-y-auto print:bg-white print:p-0 print:static">
+          <div
+            ref={reciboRef}
+            className="bg-white border-8 border-double border-emerald-800 p-8 sm:p-12 rounded-2xl shadow-xl max-w-2xl w-full mx-auto text-center relative overflow-hidden print:shadow-none print:border-8 my-8"
+          >
+            {/* Marca d'água — logo bem clarinha atrás do conteúdo, some das telas de edição, mas fica na impressão/PDF */}
+            <img
+              src="/logo-acordes-de-davi.svg"
+              alt=""
+              aria-hidden="true"
+              className="absolute inset-0 m-auto w-2/3 max-w-xs opacity-[0.16] pointer-events-none select-none"
+            />
+
+            <div className="relative z-10">
+              <div className="absolute top-4 right-4 print:hidden flex flex-wrap justify-end gap-2">
+                <button
+                  onClick={baixarPdfRecibo}
+                  disabled={gerandoPdfRecibo}
+                  className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
+                >
+                  <Download className="w-4 h-4" /> {gerandoPdfRecibo ? 'Gerando PDF...' : 'Baixar PDF'}
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  className="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow transition"
+                >
+                  <Printer className="w-4 h-4" /> Imprimir
+                </button>
+                <button
+                  onClick={() => setItemRecibo(null)}
+                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition"
+                >
+                  Fechar
+                </button>
+              </div>
+
+              <div className="mb-6">
+                <img src="/logo-acordes-de-davi.svg" alt="Logo Acordes de Davi" className="w-14 h-14 mx-auto mb-2" />
+                <h1 className="text-xl sm:text-2xl font-serif font-bold text-emerald-900 uppercase tracking-widest">Projeto Acordes de Davi</h1>
+                <p className="text-xs uppercase tracking-widest text-emerald-600 font-semibold mt-1">A Música Transforma Vidas</p>
+              </div>
+
+              <h2 className="text-3xl font-serif font-bold text-slate-800 tracking-wide mb-6">Recibo de Pagamento</h2>
+
+              <div className="text-left space-y-1.5 text-sm text-slate-700 mb-6">
+                <p>
+                  <span className="font-semibold text-slate-800">{itemRecibo.origem === 'igreja' ? 'Igreja mantenedora:' : 'Aluno(a):'}</span>{' '}
+                  {itemRecibo.nome}
+                </p>
+                <p><span className="font-semibold text-slate-800">Polo:</span> {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}</p>
+                {itemRecibo.instrumento && (
+                  <p><span className="font-semibold text-slate-800">Instrumento:</span> {itemRecibo.instrumento}</p>
+                )}
+                <p>
+                  <span className="font-semibold text-slate-800">Tipo de cobrança:</span>{' '}
+                  {itemRecibo.tipoPagamento === 'individual'
+                    ? `Individual (${quantidadeAulasRecibo} aula${quantidadeAulasRecibo > 1 ? 's' : ''})`
+                    : 'Pacote'}
+                </p>
+                <p>
+                  <span className="font-semibold text-slate-800">Forma de pagamento:</span>{' '}
+                  {itemRecibo.formaPagamento === 'pix' ? 'Pix' : itemRecibo.formaPagamento === 'dinheiro' ? 'Dinheiro' : 'Outro'}
+                </p>
+                <p>
+                  <span className="font-semibold text-slate-800">Data do pagamento:</span>{' '}
+                  {itemRecibo.dataPagamento ? new Date(itemRecibo.dataPagamento + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
+                </p>
+              </div>
+
+              {/* Só o admin edita quantidade/valor antes de gerar — aluno e igreja veem
+                  direto o valor já combinado/lançado, sem poder alterar nada aqui. */}
+              {souAdmin ? (
+                <>
+                  {itemRecibo.tipoPagamento === 'individual' && (
+                    <div className="mb-4 print:hidden flex items-center justify-center gap-2">
+                      <label className="text-xs font-semibold text-slate-600 uppercase">Quantidade de aulas</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={quantidadeAulasRecibo}
+                        onChange={(e) => {
+                          const qtd = Math.max(1, Number(e.target.value) || 1);
+                          setQuantidadeAulasRecibo(qtd);
+                          setValorRecibo(String(valorSugeridoRecibo(itemRecibo, LOCALIZACOES.find(l => l.id === itemRecibo.local), qtd)));
+                        }}
+                        className="w-20 px-2 py-1.5 border border-slate-300 rounded-lg text-sm text-center"
+                      />
+                    </div>
+                  )}
+
+                  <div className="mb-6 print:hidden flex items-center justify-center gap-2">
+                    <label className="text-xs font-semibold text-slate-600 uppercase">Valor (editável)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={valorRecibo}
+                      onChange={(e) => setValorRecibo(e.target.value)}
+                      className="w-32 px-2 py-1.5 border border-slate-300 rounded-lg text-sm text-center"
+                    />
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-slate-400 mb-2 print:hidden">Valor lançado pela coordenação:</p>
+              )}
+
+              <p className="text-4xl font-bold text-emerald-900 border-t-2 border-b-2 border-emerald-600 py-4 mb-6">
+                {formatarBRL(valorRecibo)}
+              </p>
+
+              <p className="text-sm text-slate-700 max-w-xl mx-auto leading-relaxed mb-8">
+                Recebemos de <strong className="text-emerald-900">{itemRecibo.nome}</strong> o valor acima referente ao pagamento{' '}
+                {itemRecibo.instrumento ? `das aulas de ${itemRecibo.instrumento}` : 'do pacote de aulas'} no Projeto Acordes de Davi, polo{' '}
+                {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}.
+              </p>
+
+              {itemRecibo.origem === 'igreja' && (
+                <div className="text-left max-w-xl mx-auto mb-8">
+                  <p className="text-xs font-semibold text-slate-800 uppercase tracking-wide mb-2 border-b border-slate-200 pb-1">
+                    Alunos atendidos por esse pacote
+                  </p>
+                  <ul className="text-sm text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5 list-disc list-inside">
+                    {agendamentos.filter(a => a.local === itemRecibo.local).map((a) => (
+                      <li key={a.id}>
+                        {a.nome} <span className="text-xs text-slate-500 capitalize">— {a.instrumento}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {dadosProprietario.nome && (
+                <div className="text-left max-w-xl mx-auto mb-2 text-[11px] text-slate-600 leading-relaxed">
+                  <p className="font-semibold text-slate-700 uppercase tracking-wide text-[10px] mb-0.5">Emitido por</p>
+                  <p>{dadosProprietario.nome}{dadosProprietario.cpf ? ` — CPF/CNPJ: ${dadosProprietario.cpf}` : ''}</p>
+                  {dadosProprietario.endereco && <p>{dadosProprietario.endereco}</p>}
+                </div>
+              )}
+
+              <div className="mt-10 pt-6 border-t border-slate-300 text-xs text-slate-600">
+                <div className="border-b border-slate-400 w-56 mb-1 mx-auto"></div>
+                <p className="font-bold text-slate-800">Coordenação do Projeto</p>
+                <p className="text-slate-500">Recibo emitido em: {new Date().toLocaleDateString('pt-BR')}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <footer className="bg-white border-t border-slate-200 mt-8 py-4 text-center text-xs text-slate-500 print:hidden">
         Projeto Acordes de Davi &bull; Sistema Integrado com Firebase
