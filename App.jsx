@@ -1169,7 +1169,28 @@ export default function App() {
     if (!reciboRef.current) return;
     setGerandoPdfRecibo(true);
     try {
-      const canvas = await html2canvas(reciboRef.current, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+      const cartao = reciboRef.current;
+      // O cartão do recibo fica dentro de um fundo "position: fixed" (o modal que
+      // escurece o resto da tela) — o html2canvas tem um bug conhecido com isso: ele
+      // tira a "foto" só do que está dentro da altura da JANELA visível, cortando
+      // tudo que passar disso (é exatamente o "corta embaixo", inclusive o bloco
+      // "Emitido por" que fica bem no final). Forçando explicitamente o tamanho da
+      // "janela" que ele usa por dentro pra ser do tamanho INTEIRO do cartão (em vez
+      // do tamanho da tela do celular/notebook), ele deixa de cortar, porque nada
+      // fica "fora da janela" nunca mais.
+      const canvas = await html2canvas(cartao, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        x: 0,
+        y: 0,
+        scrollX: 0,
+        scrollY: 0,
+        width: cartao.scrollWidth,
+        height: cartao.scrollHeight,
+        windowWidth: cartao.scrollWidth,
+        windowHeight: cartao.scrollHeight
+      });
       const imagem = canvas.toDataURL('image/png');
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
       // Encaixa a "foto" do recibo INTEIRA dentro de uma página só, com uma margem —
