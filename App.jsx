@@ -136,9 +136,14 @@ const gerarDatasDaTurma = (turma, dataInicioIso) => {
 // Vencimento periódico simples (usado pro pacote/igreja): a cada "passoDias" dias,
 // contados de dataInicioIso. Devolve null se o polo ainda não tem data de início
 // definida (não dá pra calcular nada sem isso).
-const calcularVencimentoPeriodico = (dataInicioIso, passoDias) => {
-  const inicio = paraDataLocal(dataInicioIso);
-  if (!inicio) return null;
+// offsetDias desloca a data-âncora antes de calcular os ciclos — usado pelas parcelas
+// (ver PARCELAS_POR_POLO): cada parcela recorre a cada 28 dias (mensal), mas a parcela 2
+// começa 14 dias depois da parcela 1, então na prática cai uma cobrança a cada quinzena.
+const calcularVencimentoPeriodico = (dataInicioIso, passoDias, offsetDias = 0) => {
+  const inicioBase = paraDataLocal(dataInicioIso);
+  if (!inicioBase) return null;
+  const inicio = new Date(inicioBase);
+  if (offsetDias) inicio.setDate(inicio.getDate() + offsetDias);
 
   const hoje = new Date();
   hoje.setHours(0, 0, 0, 0);
@@ -212,20 +217,27 @@ const nomeInstrumento = (id) => INSTRUMENTOS.find(i => i.id === id)?.nome.replac
 // Côco (Igreja Tabernáculo) têm esse modelo confirmado no planejamento; os outros (São
 // Luís, Chalé) ficam com uma estimativa antiga só pra caso algum aluno deles vire pacote.
 const VALOR_PACOTE_POR_POLO = {
-  agualimpa: 400,     // Água Limpa (Igreja Assembleia de Deus)
-  penhadococo: 350,   // Penha do Côco (Igreja Tabernáculo)
+  agualimpa: 400,     // Água Limpa (Igreja Assembleia de Deus) — pago em 2x, ver PARCELAS_POR_POLO
+  penhadococo: 350,   // Penha do Côco (Igreja Tabernáculo) — integral
   saoluiz: 600,
   chale: 500
 };
 // Polo pacote que não está no mapa acima (ex: um polo novo criado pela tela) cai aqui.
 const VALOR_PACOTE_PADRAO_OUTROS = 300;
 
+// Em quantas parcelas o pacote de cada polo é pago — hoje só Água Limpa (2x, uma a cada
+// quinzena; ver calcularVencimentoPeriodico e o relatório Financeiro). Todo polo que não
+// está aqui é "integral" (1 parcela só), do jeito que já funcionava antes.
+const PARCELAS_POR_POLO = {
+  agualimpa: 2
+};
+const numParcelasDoPolo = (poloId) => PARCELAS_POR_POLO[poloId] || 1;
+
 // Valor por aula, pra quando o aluno paga individualmente (fora do pacote da igreja).
-// São Luís, Chalé e Mata Fria vêm direto do planejamento; Chalé varia de R$35 a R$40 no
-// documento — usando o valor mais baixo aqui (sempre editável na hora, se for outro).
+// São Luís, Chalé e Mata Fria vêm direto do planejamento (tabela confirmada em 15/09).
 const VALOR_AULA_POR_POLO = {
   saoluiz: 50,  // R$30 aula-base + R$20 deslocamento/alimentação (36km cada trecho)
-  chale: 35,    // varia R$35–40 no planejamento
+  chale: 40,
   matafria: 30  // sem custo de deslocamento — professor mora na comunidade
 };
 // Polo individual que não está no mapa acima (ex: Água Limpa/Penha do Côco, que hoje só
@@ -1786,6 +1798,38 @@ export default function App() {
     }
   };
 
+  // Parcelas de pacotes divididos (hoje só Água Limpa, em 2x — ver PARCELAS_POR_POLO):
+  // cada parcela tem seu próprio valor/data/status, guardados em campos separados
+  // (parcela1Valor, parcela1Pago, parcela1DataPagamento, parcela2Valor, ...) em vez de uma
+  // lista, porque o Firestore não permite atualizar só 1 item de dentro de um array — e
+  // esses campos ficam parados (sem uso) em qualquer polo com 1 parcela só (integral).
+  const alterarValorParcelaIgreja = async (id, numeroParcela, novoValor) => {
+    try {
+      const valor = novoValor === '' ? null : Number(novoValor);
+      await updateDoc(doc(db, 'igrejas', id), { [`parcela${numeroParcela}Valor`]: valor });
+    } catch (err) {
+      console.error('Erro ao alterar valor da parcela:', err);
+      alert('Erro ao salvar o valor dessa parcela.');
+    }
+  };
+
+  const alterarDataPagamentoParcelaIgreja = async (id, numeroParcela, novaData) => {
+    try {
+      await updateDoc(doc(db, 'igrejas', id), { [`parcela${numeroParcela}DataPagamento`]: novaData });
+    } catch (err) {
+      console.error('Erro ao alterar data de pagamento da parcela:', err);
+      alert('Erro ao alterar a data de pagamento.');
+    }
+  };
+
+  const alternarPagamentoParcelaIgreja = async (id, numeroParcela, statusAtual) => {
+    try {
+      await updateDoc(doc(db, 'igrejas', id), { [`parcela${numeroParcela}Pago`]: !statusAtual });
+    } catch (err) {
+      console.error('Erro ao atualizar pagamento da parcela:', err);
+    }
+  };
+
   // Cria (ou redefine a senha de) o login do Portal da Igreja — feito por você, aqui na
   // aba Igrejas. Passa por uma função serverless (não mexe direto no Firebase Auth
   // daqui do navegador) porque criar uma conta pelo front-end loga automaticamente COMO
@@ -2052,24 +2096,76 @@ export default function App() {
     polosComPacote.forEach((localId) => {
       const polo = LOCALIZACOES.find(l => l.id === localId);
       const igrejaDoPolo = igrejasCadastradas.find(i => i.poloId === localId);
-      const valor = Number(igrejaDoPolo?.valorCombinado) || 0;
-      let status = 'semDados';
-      let vencimento = null;
-      let motivo = !igrejaDoPolo
-        ? 'Falta criar o acesso dessa igreja na aba Igrejas (é lá que fica o valor combinado e o status de pago).'
-        : 'Falta definir a "Data de início das aulas" desse polo na aba Horários.';
 
-      if (igrejaDoPolo?.pago) {
-        status = 'pago';
-      } else if (igrejaDoPolo && polo?.dataInicioAulas) {
-        const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14);
-        if (calculo) {
-          vencimento = calculo.vencimento;
-          status = calculo.passadoAlgum ? 'atrasado' : 'pendente';
-        }
+      if (!igrejaDoPolo) {
+        linhas.push({
+          tipo: 'pacote',
+          nome: polo?.nome || localId,
+          local: polo?.nome || localId,
+          valor: 0,
+          vencimento: null,
+          status: 'semDados',
+          motivo: 'Falta criar o acesso dessa igreja na aba Igrejas (é lá que fica o valor combinado e o status de pago).'
+        });
+        return;
       }
 
-      linhas.push({ tipo: 'pacote', nome: igrejaDoPolo?.nome || polo?.nome || localId, local: polo?.nome || localId, valor, vencimento, status, motivo });
+      const numParcelas = numParcelasDoPolo(localId);
+
+      if (numParcelas <= 1) {
+        // Comportamento de sempre — 1 conta só por polo, sem regressão.
+        const valor = Number(igrejaDoPolo?.valorCombinado) || 0;
+        let status = 'semDados';
+        let vencimento = null;
+        const motivo = 'Falta definir a "Data de início das aulas" desse polo na aba Horários.';
+
+        if (igrejaDoPolo.pago) {
+          status = 'pago';
+        } else if (polo?.dataInicioAulas) {
+          const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14);
+          if (calculo) {
+            vencimento = calculo.vencimento;
+            status = calculo.passadoAlgum ? 'atrasado' : 'pendente';
+          }
+        }
+
+        linhas.push({ tipo: 'pacote', nome: igrejaDoPolo.nome || polo?.nome || localId, local: polo?.nome || localId, valor, vencimento, status, motivo });
+        return;
+      }
+
+      // Pacote dividido em parcelas (ex: Água Limpa, 2x): cada parcela é uma conta
+      // independente, com seu próprio valor/status/vencimento. Cada parcela recorre a
+      // cada 28 dias (mensal), deslocada (numeroParcela - 1) x 14 dias da 1ª — assim, no
+      // total, cai uma cobrança a cada quinzena, como foi combinado.
+      for (let n = 1; n <= numParcelas; n++) {
+        const valorBrutoParcela = igrejaDoPolo[`parcela${n}Valor`];
+        const valor = (valorBrutoParcela != null && valorBrutoParcela !== '')
+          ? Number(valorBrutoParcela)
+          : (Number(igrejaDoPolo?.valorCombinado) || 0) / numParcelas;
+        let status = 'semDados';
+        let vencimento = null;
+        const motivo = 'Falta definir a "Data de início das aulas" desse polo na aba Horários.';
+
+        if (igrejaDoPolo[`parcela${n}Pago`]) {
+          status = 'pago';
+        } else if (polo?.dataInicioAulas) {
+          const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 28, (n - 1) * 14);
+          if (calculo) {
+            vencimento = calculo.vencimento;
+            status = calculo.passadoAlgum ? 'atrasado' : 'pendente';
+          }
+        }
+
+        linhas.push({
+          tipo: 'pacote',
+          nome: `${igrejaDoPolo.nome || polo?.nome || localId} — Parcela ${n}/${numParcelas}`,
+          local: polo?.nome || localId,
+          valor,
+          vencimento,
+          status,
+          motivo
+        });
+      }
     });
 
     const porStatus = { pago: [], pendente: [], atrasado: [], semDados: [] };
@@ -3147,17 +3243,65 @@ export default function App() {
                                 </div>
                               </div>
 
-                              <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
-                                <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${igrejaDoPolo.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                  {igrejaDoPolo.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
-                                </span>
-                                <button
-                                  onClick={() => alternarPagamentoIgreja(igrejaDoPolo.id, igrejaDoPolo.pago)}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${igrejaDoPolo.pago ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}
-                                >
-                                  {igrejaDoPolo.pago ? 'Marcar Pendente' : 'Marcar como Pago'}
-                                </button>
-                              </div>
+                              {numParcelasDoPolo(polo.id) > 1 ? (
+                                // Pacote dividido em parcelas (ex: Água Limpa, 2x) — cada
+                                // parcela tem seu próprio valor/data/status, independente das
+                                // outras (ver PARCELAS_POR_POLO e o relatório Financeiro).
+                                <div className="pt-3 border-t border-slate-200 space-y-2">
+                                  {Array.from({ length: numParcelasDoPolo(polo.id) }, (_, i) => i + 1).map((n) => {
+                                    const valorParcela = igrejaDoPolo[`parcela${n}Valor`] ?? (Number(igrejaDoPolo.valorCombinado) || 0) / numParcelasDoPolo(polo.id);
+                                    const pagoParcela = !!igrejaDoPolo[`parcela${n}Pago`];
+                                    return (
+                                      <div key={n} className="bg-white border border-slate-200 rounded-lg p-2 space-y-1.5">
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-[11px] font-bold text-slate-600">Parcela {n}/{numParcelasDoPolo(polo.id)}</span>
+                                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${pagoParcela ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                            {pagoParcela ? 'PAGO ✓' : 'PENDENTE ✕'}
+                                          </span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-1.5">
+                                          <input
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={valorParcela ?? ''}
+                                            onChange={(e) => alterarValorParcelaIgreja(igrejaDoPolo.id, n, e.target.value)}
+                                            placeholder="0,00"
+                                            className="w-full px-2 py-1 border border-slate-300 rounded-lg text-[11px] bg-white focus:ring-2 focus:ring-emerald-500"
+                                          />
+                                          <input
+                                            type="date"
+                                            value={igrejaDoPolo[`parcela${n}DataPagamento`] || ''}
+                                            onChange={(e) => alterarDataPagamentoParcelaIgreja(igrejaDoPolo.id, n, e.target.value)}
+                                            className="w-full px-2 py-1 border border-slate-300 rounded-lg text-[11px] bg-white focus:ring-2 focus:ring-emerald-500"
+                                          />
+                                        </div>
+                                        <button
+                                          onClick={() => alternarPagamentoParcelaIgreja(igrejaDoPolo.id, n, pagoParcela)}
+                                          className={`w-full px-2 py-1 rounded-lg text-[11px] font-bold transition ${pagoParcela ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}
+                                        >
+                                          {pagoParcela ? 'Marcar Pendente' : 'Marcar como Pago'}
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                  <p className="text-[10px] text-slate-400 italic">
+                                    O Pix/recibo abaixo (se usado) é sempre pelo valor combinado total — o controle de cada parcela é só pra acompanhamento aqui no sistema.
+                                  </p>
+                                </div>
+                              ) : (
+                                <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
+                                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${igrejaDoPolo.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                    {igrejaDoPolo.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
+                                  </span>
+                                  <button
+                                    onClick={() => alternarPagamentoIgreja(igrejaDoPolo.id, igrejaDoPolo.pago)}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${igrejaDoPolo.pago ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}
+                                  >
+                                    {igrejaDoPolo.pago ? 'Marcar Pendente' : 'Marcar como Pago'}
+                                  </button>
+                                </div>
+                              )}
 
                               {igrejaDoPolo.dataPagamento && (
                                 <button
@@ -4134,14 +4278,64 @@ export default function App() {
                           </div>
                           <div className="flex flex-col items-start gap-1">
                             <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Status</label>
-                            <button
-                              onClick={() => alternarPagamentoIgreja(igreja.id, igreja.pago)}
-                              className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition ${igreja.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
-                            >
-                              {igreja.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
-                            </button>
+                            {numParcelasDoPolo(igreja.poloId) > 1 ? (
+                              <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">
+                                Ver parcelas ↓
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => alternarPagamentoIgreja(igreja.id, igreja.pago)}
+                                className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition ${igreja.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
+                              >
+                                {igreja.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
+                              </button>
+                            )}
                           </div>
                         </div>
+
+                        {numParcelasDoPolo(igreja.poloId) > 1 && (
+                          // Pacote dividido em parcelas (ex: Água Limpa, 2x) — cada parcela
+                          // tem seu próprio valor/data/status (ver PARCELAS_POR_POLO).
+                          <div className="mt-3 pt-3 border-t border-slate-200 grid gap-2 sm:grid-cols-2">
+                            {Array.from({ length: numParcelasDoPolo(igreja.poloId) }, (_, i) => i + 1).map((n) => {
+                              const valorParcela = igreja[`parcela${n}Valor`] ?? (Number(igreja.valorCombinado) || 0) / numParcelasDoPolo(igreja.poloId);
+                              const pagoParcela = !!igreja[`parcela${n}Pago`];
+                              return (
+                                <div key={n} className="bg-slate-50 border border-slate-200 rounded-lg p-2 space-y-1.5">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[11px] font-bold text-slate-600">Parcela {n}/{numParcelasDoPolo(igreja.poloId)}</span>
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${pagoParcela ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                      {pagoParcela ? 'PAGO ✓' : 'PENDENTE ✕'}
+                                    </span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-1.5">
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      value={valorParcela ?? ''}
+                                      onChange={(e) => alterarValorParcelaIgreja(igreja.id, n, e.target.value)}
+                                      placeholder="0,00"
+                                      className="w-full px-2 py-1 border border-slate-300 rounded-lg text-[11px] bg-white focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                    <input
+                                      type="date"
+                                      value={igreja[`parcela${n}DataPagamento`] || ''}
+                                      onChange={(e) => alterarDataPagamentoParcelaIgreja(igreja.id, n, e.target.value)}
+                                      className="w-full px-2 py-1 border border-slate-300 rounded-lg text-[11px] bg-white focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                  </div>
+                                  <button
+                                    onClick={() => alternarPagamentoParcelaIgreja(igreja.id, n, pagoParcela)}
+                                    className={`w-full px-2 py-1 rounded-lg text-[11px] font-bold transition ${pagoParcela ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}
+                                  >
+                                    {pagoParcela ? 'Marcar Pendente' : 'Marcar como Pago'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
 
                         {!igreja.pago && (
                           igreja.valorCombinado ? (
@@ -4156,6 +4350,11 @@ export default function App() {
                           ) : (
                             <p className="text-[11px] text-slate-400 mt-3 italic">Defina o valor combinado acima pra poder gerar o Pix.</p>
                           )
+                        )}
+                        {numParcelasDoPolo(igreja.poloId) > 1 && (
+                          <p className="text-[10px] text-slate-400 italic mt-1.5">
+                            O Pix acima (se usado) é sempre pelo valor combinado total — o controle de cada parcela é só pra acompanhamento aqui no sistema.
+                          </p>
                         )}
 
                         {igreja.dataPagamento && (
