@@ -2348,7 +2348,10 @@ export default function App() {
         if (item.pago) {
           status = 'pago';
         } else if (polo?.dataInicioAulas) {
-          const calculo = calcularVencimentoPorAulas({ dia: item.dia }, polo.dataInicioAulas, 5);
+          // Mesma lógica de fallback usada no Portal do Aluno: se o agendamento não tem
+          // "dia" salvo, busca o dia configurado na aba Horários pra esse local +
+          // instrumento + horário, em vez de cair direto em "sem dados suficientes".
+          const calculo = calcularVencimentoPorAulas({ dia: diaDoAgendamento(item) }, polo.dataInicioAulas, 5);
           if (calculo) {
             vencimento = calculo.vencimento;
             status = calculo.passadoAlgum ? 'atrasado' : 'pendente';
@@ -2454,7 +2457,7 @@ export default function App() {
       atrasado: { itens: porStatus.atrasado, total: somaValor(porStatus.atrasado) },
       semDados: { itens: porStatus.semDados, total: somaValor(porStatus.semDados) }
     };
-  }, [agendamentos, igrejasCadastradas]);
+  }, [agendamentos, igrejasCadastradas, turmasCadastradas]);
 
   // Agendamentos do próprio aluno logado (as regras do Firestore já garantem
   // que "agendamentos" só traz os dele quando não é admin, mas filtramos de novo por clareza)
@@ -2837,7 +2840,7 @@ export default function App() {
                           <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded uppercase">
                             {LOCALIZACOES.find(l => l.id === item.local)?.nome || item.local}
                           </span>
-                          <span className="text-xs text-slate-400 font-medium">{formatarHorario(item)}</span>
+                          <span className="text-xs text-slate-400 font-medium">{formatarHorario({ ...item, dia: diaDoAgendamento(item) })}</span>
                         </div>
                         <h3 className="font-bold text-slate-800 text-base">{item.nome}</h3>
                         <p className="text-xs text-slate-500 mt-0.5">Telefone: {item.telefone || 'Não informado'}</p>
@@ -3002,7 +3005,7 @@ export default function App() {
                         {grupo.map(item => (
                           <div key={item.id} className="flex items-center justify-between gap-3 text-xs bg-slate-50 border border-slate-200 rounded p-2">
                             <span className="text-slate-600">
-                              {LOCALIZACOES.find(l => l.id === item.local)?.nome || item.local} · {item.instrumento} · {formatarHorario(item)} · {item.pago ? 'Pago' : 'Pendente'}
+                              {LOCALIZACOES.find(l => l.id === item.local)?.nome || item.local} · {item.instrumento} · {formatarHorario({ ...item, dia: diaDoAgendamento(item) })} · {item.pago ? 'Pago' : 'Pendente'}
                             </span>
                             <button
                               onClick={() => excluirAgendamento(item.id)}
@@ -3074,7 +3077,7 @@ export default function App() {
                         <div className="text-xs capitalize text-slate-500">{item.instrumento}</div>
                       </td>
                       <td className="p-3 text-xs text-slate-600">
-                        {formatarHorario(item)}
+                        {formatarHorario({ ...item, dia: diaDoAgendamento(item) })}
                       </td>
                       <td className="p-3">
                         <span className={`text-xs px-2 py-1 rounded font-medium uppercase ${item.pago ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
@@ -3308,7 +3311,7 @@ export default function App() {
                   // que ficou salvo no cadastro de cada aluno.
                   const turmasDoGrupo = new Map();
                   alunosDoPolo.forEach((item) => {
-                    const chaveTurma = `${item.instrumento}|${item.dia || 'sem-dia'}`;
+                    const chaveTurma = `${item.instrumento}|${diaDoAgendamento(item) || 'sem-dia'}`;
                     if (!turmasDoGrupo.has(chaveTurma)) turmasDoGrupo.set(chaveTurma, []);
                     turmasDoGrupo.get(chaveTurma).push(item);
                   });
