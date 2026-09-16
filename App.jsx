@@ -1809,7 +1809,11 @@ export default function App() {
     }
     let maisProxima = null;
     for (let n = 1; n <= numParcelas; n++) {
-      const paga = !!igreja[`parcela${n}Pago`];
+      // Conta como pago tanto se essa parcela específica foi marcada quanto se o
+      // pagamento foi registrado de uma vez só, pelo valor total (o campo "pago" único
+      // da igreja, usado no botão de Pix consolidado) — senão quem paga tudo de uma vez
+      // pelo Pix nunca vê a data avançar pra próxima, mesmo já tendo pago aquele ciclo.
+      const paga = !!igreja[`parcela${n}Pago`] || !!igreja.pago;
       const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 28, (n - 1) * 14, paga);
       if (calculo?.vencimento && (!maisProxima || calculo.vencimento < maisProxima)) {
         maisProxima = calculo.vencimento;
@@ -2477,7 +2481,12 @@ export default function App() {
         let vencimento = null;
         const motivo = 'Falta definir a "Data de início das aulas" desse polo na aba Horários.';
 
-        if (igrejaDoPolo[`parcela${n}Pago`]) {
+        // Conta como pago tanto se essa parcela específica foi marcada (parcelaNPago)
+        // quanto se o pagamento foi registrado de uma vez só, pelo valor total (o campo
+        // "pago" único da igreja, usado no botão de Pix consolidado) — sem isso, quem
+        // paga tudo de uma vez pelo Pix nunca via a parcela avançar pra próxima data,
+        // mesmo já tendo pago aquele ciclo.
+        if (igrejaDoPolo[`parcela${n}Pago`] || igrejaDoPolo.pago) {
           status = 'pago';
           // Já pagou essa parcela — mostra a PRÓXIMA data de pagamento dela (o ciclo
           // seguinte, 28 dias depois), em vez de deixar sem nenhuma data.
