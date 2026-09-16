@@ -1719,6 +1719,46 @@ export default function App() {
       .map(p => ({ id: p.id, nome: p.nome, descricao: p.descricao, dataInicioAulas: p.dataInicioAulas ?? '', integrantesBanda: p.integrantesBanda ?? [] }))
   ];
 
+  // Preenche automaticamente o "Valor combinado" de quem ainda não tem um definido — usa
+  // a mesma sugestão de preço do botão "usar sugestão" (tabela de preços por polo, em
+  // valorSugeridoRecibo) — assim o botão "Pagar com Pix" já aparece pro aluno no Portal
+  // dele sem precisar o admin clicar em "usar sugestão" pra cada um, um por um. Só roda
+  // enquanto o ADMIN está logado (só esse e-mail tem permissão pra editar "agendamentos"
+  // pelas regras do Firestore) e nunca toca em quem já tem valor definido — o admin
+  // continua podendo ajustar/corrigir o valor de qualquer aluno na aba Pagamentos, na mão,
+  // a qualquer momento (isso nunca é sobrescrito de volta por aqui). A ref evita mandar a
+  // mesma gravação duas vezes enquanto o Firestore ainda não confirmou a primeira.
+  const valorAutoPreenchidoRef = useRef(new Set());
+  useEffect(() => {
+    if (!souAdmin) return;
+    agendamentos
+      .filter(item => !item.pago && (item.valorCombinado == null || item.valorCombinado === '') && !valorAutoPreenchidoRef.current.has(item.id))
+      .forEach(item => {
+        const polo = LOCALIZACOES.find(l => l.id === item.local);
+        const sugestao = valorSugeridoRecibo(item, polo);
+        if (sugestao > 0) {
+          valorAutoPreenchidoRef.current.add(item.id);
+          alterarValorCombinado(item.id, String(sugestao));
+        }
+      });
+  }, [souAdmin, agendamentos]);
+
+  // Dia da semana mostrado pro aluno (Portal do Aluno). Se o agendamento já tem "dia"
+  // salvo, usa ele direto — é o caminho normal, salvo na hora do cadastro. Se não tiver
+  // (cadastro antigo, importação de planilha sem essa coluna, etc.), busca esse mesmo
+  // horário na aba "Horários" (turmasCadastradas) e usa o dia configurado lá pra esse
+  // local + instrumento + horário — assim o aluno sempre vê o dia certo, de acordo com a
+  // grade atual, mesmo que o registro dele esteja incompleto.
+  const diaDoAgendamento = (item) => {
+    if (item?.dia) return item.dia;
+    const turma = turmasCadastradas.find(t =>
+      t.local === item?.local &&
+      t.instrumento === item?.instrumento &&
+      (t.horarios || []).some(h => h.value === item?.horario || h.label === item?.horarioLabel)
+    );
+    return turma?.dia || '';
+  };
+
   // Cria um novo polo (local de ensino) — só o admin consegue (regra do Firestore).
   // O id do documento é um "slug" gerado do nome (ex: "Praia Bonita" -> "praiabonita"),
   // no mesmo padrão dos polos que já existem, pra ficar compatível com o campo "local"
@@ -5218,7 +5258,7 @@ export default function App() {
                         <div className="flex items-center text-emerald-200 mb-1 gap-2 text-xs font-semibold uppercase tracking-wide">
                           <MapPin className="w-4 h-4" /> {LOCALIZACOES.find(l => l.id === item.local)?.nome}
                         </div>
-                        <h3 className="text-lg font-bold leading-tight capitalize">{item.instrumento} — {item.dia || 'Horário a combinar'}</h3>
+                        <h3 className="text-lg font-bold leading-tight capitalize">{item.instrumento} — {diaDoAgendamento(item) || 'Horário a combinar'}</h3>
                         <div className="mt-3 bg-emerald-900/40 rounded-lg p-3 flex items-center gap-2">
                           <Clock className="w-5 h-5 text-emerald-300" />
                           <span className="font-bold">{item.horarioLabel || item.horario || 'A combinar'}</span>
