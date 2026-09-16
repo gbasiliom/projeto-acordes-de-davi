@@ -1759,6 +1759,23 @@ export default function App() {
     return turma?.dia || '';
   };
 
+  // Data (calendário real, não só o dia da semana) da próxima aula desse agendamento —
+  // mostrado no Portal do Aluno. Reaproveita o mesmo cálculo já usado na aba Pauta
+  // (gerarDatasDaTurma, a partir do dia da semana + "Data de início das aulas" do polo,
+  // configurada na aba Horários). Sem essa data de início configurada no polo, ou sem
+  // reconhecer o dia da semana, não tem como calcular — devolve null nesses casos, sem
+  // travar a tela.
+  const proximaDataAula = (item) => {
+    const polo = LOCALIZACOES.find(l => l.id === item?.local);
+    if (!polo?.dataInicioAulas) return null;
+    const dia = diaDoAgendamento(item);
+    if (!dia) return null;
+    const datas = gerarDatasDaTurma({ dia }, polo.dataInicioAulas);
+    if (datas.length === 0) return null;
+    const hojeIso = paraISO(new Date());
+    return datas.find(d => d >= hojeIso) || datas[datas.length - 1] || null;
+  };
+
   // Cria um novo polo (local de ensino) — só o admin consegue (regra do Firestore).
   // O id do documento é um "slug" gerado do nome (ex: "Praia Bonita" -> "praiabonita"),
   // no mesmo padrão dos polos que já existem, pra ficar compatível com o campo "local"
@@ -5263,6 +5280,12 @@ export default function App() {
                           <Clock className="w-5 h-5 text-emerald-300" />
                           <span className="font-bold">{item.horarioLabel || item.horario || 'A combinar'}</span>
                         </div>
+                        {proximaDataAula(item) && (
+                          <p className="text-xs text-emerald-200 mt-2 flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5" />
+                            Próxima aula: <span className="font-semibold text-white">{paraDataLocal(proximaDataAula(item)).toLocaleDateString('pt-BR')}</span>
+                          </p>
+                        )}
                         <p className="text-xs text-emerald-200 mt-3">
                           {item.pago ? 'Pagamento em dia.' : 'Pagamento pendente — fale com a coordenação.'}
                         </p>
