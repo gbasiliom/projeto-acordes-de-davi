@@ -5625,6 +5625,7 @@ export default function App() {
                           <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
                             <th className="p-3">Aluno</th>
                             <th className="p-3">Instrumento</th>
+                            <th className="p-3 text-center">Próxima aula</th>
                             <th className="p-3 text-center">Última aula</th>
                             <th className="p-3 text-center">Detalhes</th>
                           </tr>
@@ -5648,6 +5649,16 @@ export default function App() {
                                   <td className="p-3 font-bold text-slate-800">{item.nome}</td>
                                   <td className="p-3 text-xs text-slate-600 capitalize">{item.instrumento}</td>
                                   <td className="p-3 text-center">
+                                    {proximaDataAula(item) ? (
+                                      <span className="px-3 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700">
+                                        <Calendar className="w-3.5 h-3.5" />
+                                        {paraDataLocal(proximaDataAula(item)).toLocaleDateString('pt-BR')}
+                                      </span>
+                                    ) : (
+                                      <span className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-500">A combinar</span>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-center">
                                     {ultimaPresenca ? (
                                       <span className={`px-3 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 ${ultimaPresenca.presente ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                                         {ultimaPresenca.presente ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
@@ -5663,7 +5674,7 @@ export default function App() {
                                 </tr>
                                 {expandido && (
                                   <tr>
-                                    <td colSpan={4} className="p-4 bg-slate-50">
+                                    <td colSpan={5} className="p-4 bg-slate-50">
                                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div>
                                           <p className="text-xs font-bold text-slate-600 uppercase mb-2">Histórico de Frequência</p>
