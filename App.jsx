@@ -131,9 +131,14 @@ const gerarDatasDaTurma = (turma, dataInicioIso) => {
 //     "Sexta (Quinzenal)" etc.).
 // Nos dois casos, a regra de status é a mesma: ainda não chegou a data -> "Pendente"
 // (pagamento previsto); a data já chegou/passou e ainda não foi marcado como pago ->
-// "Atrasado". Uma conta com "pago" marcado sempre aparece como "Em dia" — marcar como
-// pago não fecha e reabre um novo ciclo sozinho a cada quinzena/5 aulas (isso exigiria
-// guardar um histórico de pagamentos, que não existe hoje).
+// "Atrasado". Uma conta com "pago" marcado aparece como "Em dia" — e o "vencimento"
+// mostrado nesse caso já vira automaticamente o PRÓXIMO ciclo (o parâmetro
+// avancarUmCiclo abaixo), pra sempre mostrar a próxima data de pagamento esperada, do
+// mesmo jeito, pra todos os polos, sem precisar digitar nada. Isso ainda não guarda um
+// histórico de pagamentos por ciclo — se "pago" continuar marcado depois que o próximo
+// ciclo também chegar/passar, o relatório volta a tratar esse próximo ciclo como o atual
+// (é a mesma limitação de sempre: current chegar/passar sem alguém desmarcar "pago"
+// primeiro é o único jeito de saber que já é hora da próxima cobrança de novo).
 
 // Vencimento periódico simples (usado pro pacote/igreja): a cada "passoDias" dias,
 // contados de dataInicioIso. Devolve null se o polo ainda não tem data de início
@@ -141,7 +146,9 @@ const gerarDatasDaTurma = (turma, dataInicioIso) => {
 // offsetDias desloca a data-âncora antes de calcular os ciclos — usado pelas parcelas
 // (ver PARCELAS_POR_POLO): cada parcela recorre a cada 28 dias (mensal), mas a parcela 2
 // começa 14 dias depois da parcela 1, então na prática cai uma cobrança a cada quinzena.
-const calcularVencimentoPeriodico = (dataInicioIso, passoDias, offsetDias = 0) => {
+// avancarUmCiclo=true pula pro vencimento do ciclo SEGUINTE (usado quando o ciclo atual
+// já está marcado como pago, pra mostrar a próxima data de pagamento em vez de nada).
+const calcularVencimentoPeriodico = (dataInicioIso, passoDias, offsetDias = 0, avancarUmCiclo = false) => {
   const inicioBase = paraDataLocal(dataInicioIso);
   if (!inicioBase) return null;
   const inicio = new Date(inicioBase);
@@ -150,39 +157,47 @@ const calcularVencimentoPeriodico = (dataInicioIso, passoDias, offsetDias = 0) =
   const hoje = new Date();
   hoje.setHours(0, 0, 0, 0);
   const diasDesdeInicio = Math.floor((hoje - inicio) / 86400000);
+  const ciclosExtra = avancarUmCiclo ? 1 : 0;
 
   if (diasDesdeInicio < passoDias) {
     // Ainda não fechou nem o primeiro ciclo — o vencimento mostrado é o primeiro,
     // ainda no futuro (por isso sempre cai em "Pendente").
     const primeiroVencimento = new Date(inicio);
-    primeiroVencimento.setDate(primeiroVencimento.getDate() + passoDias);
+    primeiroVencimento.setDate(primeiroVencimento.getDate() + passoDias * (1 + ciclosExtra));
     return { vencimento: paraISO(primeiroVencimento), passadoAlgum: false };
   }
 
   const ciclosFechados = Math.floor(diasDesdeInicio / passoDias);
   const vencimentoAtual = new Date(inicio);
-  vencimentoAtual.setDate(vencimentoAtual.getDate() + ciclosFechados * passoDias);
+  vencimentoAtual.setDate(vencimentoAtual.getDate() + (ciclosFechados + ciclosExtra) * passoDias);
   return { vencimento: paraISO(vencimentoAtual), passadoAlgum: true };
 };
 
 // Vencimento por quantidade de aulas (usado pro individual): a cada "cadaQuantasAulas"
 // datas reais da turma daquele aluno (gerarDatasDaTurma já limita a 5 meses de
 // calendário). Devolve null se não for possível calcular ainda — turma com "dia" não
-// reconhecido, polo sem data de início, ou grade curta demais pra alcançar nem o
-// primeiro ciclo dentro desses 5 meses.
-const calcularVencimentoPorAulas = (turmaFake, dataInicioIso, cadaQuantasAulas) => {
+// reconhecido, polo sem data de início, grade curta demais pra alcançar nem o primeiro
+// ciclo dentro desses 5 meses, ou (com avancarUmCiclo) o ciclo seguinte cair fora desse
+// limite de 5 meses.
+// avancarUmCiclo=true pula pro vencimento do ciclo SEGUINTE — mesma ideia de
+// calcularVencimentoPeriodico, usado quando o ciclo atual já está pago.
+const calcularVencimentoPorAulas = (turmaFake, dataInicioIso, cadaQuantasAulas, avancarUmCiclo = false) => {
   const datas = gerarDatasDaTurma(turmaFake, dataInicioIso);
   if (datas.length < cadaQuantasAulas) return null;
 
   const hojeIso = paraISO(new Date());
   const aulasAteHoje = datas.filter(d => d <= hojeIso).length;
+  const ciclosExtra = avancarUmCiclo ? 1 : 0;
 
   if (aulasAteHoje < cadaQuantasAulas) {
-    return { vencimento: datas[cadaQuantasAulas - 1], passadoAlgum: false };
+    const indiceVencimento = cadaQuantasAulas - 1 + ciclosExtra * cadaQuantasAulas;
+    if (indiceVencimento >= datas.length) return null;
+    return { vencimento: datas[indiceVencimento], passadoAlgum: false };
   }
 
   const ciclosFechados = Math.floor(aulasAteHoje / cadaQuantasAulas);
-  const indiceVencimento = ciclosFechados * cadaQuantasAulas - 1;
+  const indiceVencimento = (ciclosFechados + ciclosExtra) * cadaQuantasAulas - 1;
+  if (indiceVencimento >= datas.length) return null;
   return { vencimento: datas[indiceVencimento], passadoAlgum: true };
 };
 
@@ -1776,6 +1791,33 @@ export default function App() {
     return datas.find(d => d >= hojeIso) || datas[datas.length - 1] || null;
   };
 
+  // Próxima data de pagamento de uma igreja/polo — mostrado no Portal da Igreja.
+  // Mesma lógica automática já usada no Relatório Financeiro (calcularVencimentoPeriodico,
+  // a cada 14 dias, ou por parcela quando o polo tem mais de uma — ver PARCELAS_POR_POLO):
+  // se a conta (ou a parcela) já está paga, mostra o vencimento do ciclo SEGUINTE, em vez
+  // de sumir sem nenhuma data; se não está paga, mostra o próprio vencimento pendente ou
+  // atrasado. Quando tem mais de uma parcela, mostra a que vence primeiro entre elas —
+  // essa é "a próxima" pra igreja de verdade. Sem "Data de início das aulas" configurada
+  // pra esse polo (aba Horários), não tem como calcular — devolve null.
+  const proximoVencimentoIgreja = (igreja) => {
+    const polo = LOCALIZACOES.find(l => l.id === igreja?.poloId);
+    if (!polo?.dataInicioAulas) return null;
+    const numParcelas = numParcelasDoPolo(igreja.poloId);
+    if (numParcelas <= 1) {
+      const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14, 0, !!igreja.pago);
+      return calculo?.vencimento || null;
+    }
+    let maisProxima = null;
+    for (let n = 1; n <= numParcelas; n++) {
+      const paga = !!igreja[`parcela${n}Pago`];
+      const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 28, (n - 1) * 14, paga);
+      if (calculo?.vencimento && (!maisProxima || calculo.vencimento < maisProxima)) {
+        maisProxima = calculo.vencimento;
+      }
+    }
+    return maisProxima;
+  };
+
   // Cria um novo polo (local de ensino) — só o admin consegue (regra do Firestore).
   // O id do documento é um "slug" gerado do nome (ex: "Praia Bonita" -> "praiabonita"),
   // no mesmo padrão dos polos que já existem, pra ficar compatível com o campo "local"
@@ -2345,12 +2387,18 @@ export default function App() {
           ? 'Falta definir a "Data de início das aulas" desse polo na aba Horários.'
           : 'A turma desse aluno tem um "dia" que o sistema não conseguiu reconhecer (ou a grade é curta demais pra alcançar a 1ª cobrança dentro de 5 meses).';
 
+        // Mesma lógica de fallback usada no Portal do Aluno: se o agendamento não tem
+        // "dia" salvo, busca o dia configurado na aba Horários pra esse local +
+        // instrumento + horário, em vez de cair direto em "sem dados suficientes".
         if (item.pago) {
           status = 'pago';
+          // Já pagou o ciclo atual — mostra a PRÓXIMA data de pagamento (o ciclo
+          // seguinte), em vez de deixar sem nenhuma data.
+          if (polo?.dataInicioAulas) {
+            const calculo = calcularVencimentoPorAulas({ dia: diaDoAgendamento(item) }, polo.dataInicioAulas, 5, true);
+            if (calculo) vencimento = calculo.vencimento;
+          }
         } else if (polo?.dataInicioAulas) {
-          // Mesma lógica de fallback usada no Portal do Aluno: se o agendamento não tem
-          // "dia" salvo, busca o dia configurado na aba Horários pra esse local +
-          // instrumento + horário, em vez de cair direto em "sem dados suficientes".
           const calculo = calcularVencimentoPorAulas({ dia: diaDoAgendamento(item) }, polo.dataInicioAulas, 5);
           if (calculo) {
             vencimento = calculo.vencimento;
@@ -2398,6 +2446,12 @@ export default function App() {
 
         if (igrejaDoPolo.pago) {
           status = 'pago';
+          // Já pagou o ciclo atual — mostra a PRÓXIMA data de pagamento (o ciclo
+          // seguinte), em vez de deixar sem nenhuma data.
+          if (polo?.dataInicioAulas) {
+            const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14, 0, true);
+            if (calculo) vencimento = calculo.vencimento;
+          }
         } else if (polo?.dataInicioAulas) {
           const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14);
           if (calculo) {
@@ -2425,6 +2479,12 @@ export default function App() {
 
         if (igrejaDoPolo[`parcela${n}Pago`]) {
           status = 'pago';
+          // Já pagou essa parcela — mostra a PRÓXIMA data de pagamento dela (o ciclo
+          // seguinte, 28 dias depois), em vez de deixar sem nenhuma data.
+          if (polo?.dataInicioAulas) {
+            const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 28, (n - 1) * 14, true);
+            if (calculo) vencimento = calculo.vencimento;
+          }
         } else if (polo?.dataInicioAulas) {
           const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 28, (n - 1) * 14);
           if (calculo) {
@@ -2551,6 +2611,20 @@ export default function App() {
           className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-emerald-500"
         />
       </div>
+
+      {(item.tipoPagamento || 'pacote') === 'individual' && (
+        <p className="text-[10px] text-slate-500">
+          {item.pago ? 'Próximo vencimento' : 'Vencimento'}:{' '}
+          <span className="font-bold text-slate-700">
+            {(() => {
+              const polo = LOCALIZACOES.find(l => l.id === item.local);
+              if (!polo?.dataInicioAulas) return 'defina a "Data de início das aulas" desse polo na aba Horários';
+              const calculo = calcularVencimentoPorAulas({ dia: diaDoAgendamento(item) }, polo.dataInicioAulas, 5, !!item.pago);
+              return calculo?.vencimento ? paraDataLocal(calculo.vencimento).toLocaleDateString('pt-BR') : 'não deu pra calcular ainda';
+            })()}
+          </span>
+        </p>
+      )}
 
       <div>
         <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Valor combinado (R$) — pro Pix online</label>
@@ -3560,6 +3634,15 @@ export default function App() {
                                 </div>
                               </div>
 
+                              <p className="text-[10px] text-slate-500">
+                                {igrejaDoPolo.pago ? 'Próximo vencimento' : 'Vencimento'}:{' '}
+                                <span className="font-bold text-slate-700">
+                                  {proximoVencimentoIgreja(igrejaDoPolo)
+                                    ? paraDataLocal(proximoVencimentoIgreja(igrejaDoPolo)).toLocaleDateString('pt-BR')
+                                    : 'defina a "Data de início das aulas" desse polo na aba Horários'}
+                                </span>
+                              </p>
+
                               <div>
                                 <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Valor combinado (R$)</label>
                                 <div className="flex items-center gap-2">
@@ -4288,7 +4371,8 @@ export default function App() {
               <p className="text-xs text-slate-500">
                 Vencimento calculado sozinho: a cada 14 dias (quinzena) pro pacote/igreja, a cada 5 aulas pro individual —
                 sem precisar digitar nenhuma data. Antes do vencimento chegar é "Pendente" (pagamento previsto); depois que
-                chega/passa sem ter sido marcado como pago, vira "Atrasado".
+                chega/passa sem ter sido marcado como pago, vira "Atrasado". Quem já está marcado como pago aparece em
+                "Em dia" já mostrando a PRÓXIMA data de pagamento (o ciclo seguinte), do mesmo jeito pra todos os polos.
               </p>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
@@ -4342,7 +4426,7 @@ export default function App() {
                           <p className="text-sm font-bold text-slate-800">R$ {linha.valor.toFixed(2)}</p>
                           {linha.vencimento && (
                             <p className="text-[10px] text-slate-400">
-                              Vencimento: {new Date(`${linha.vencimento}T00:00:00`).toLocaleDateString('pt-BR')}
+                              {secao.chave === 'pago' ? 'Próximo vencimento' : 'Vencimento'}: {new Date(`${linha.vencimento}T00:00:00`).toLocaleDateString('pt-BR')}
                             </p>
                           )}
                         </div>
@@ -5517,6 +5601,16 @@ export default function App() {
                       <span className={`inline-block mt-0.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${minhaIgreja.pago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                         {minhaIgreja.pago ? 'PAGO ✓' : 'PENDENTE ✕'}
                       </span>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-500 uppercase">
+                        {minhaIgreja.pago ? 'Próximo vencimento' : 'Vencimento'}
+                      </p>
+                      <p className="text-sm font-bold text-slate-800">
+                        {proximoVencimentoIgreja(minhaIgreja)
+                          ? paraDataLocal(proximoVencimentoIgreja(minhaIgreja)).toLocaleDateString('pt-BR')
+                          : 'A combinar'}
+                      </p>
                     </div>
                   </div>
 
