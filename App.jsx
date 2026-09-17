@@ -125,7 +125,9 @@ const gerarDatasDaTurma = (turma, dataInicioIso) => {
 // Não existe campo de "data de vencimento" pra digitar — o vencimento é sempre
 // CALCULADO a partir da grade, com duas cadências diferentes combinadas com você:
 //   • Pacote (igreja/polo): vence a cada 14 dias (quinzena) contados da "Data de início
-//     das aulas" do polo, sem depender do dia da semana de nenhuma turma específica.
+//     das aulas" do polo, sem depender do dia da semana de nenhuma turma específica —
+//     salvo um polo com um ciclo combinado diferente (ver CICLO_VENCIMENTO_DIAS_POR_POLO;
+//     hoje só Penha do Côco/Igreja Tabernáculo, 30 dias).
 //   • Individual: vence a cada 5 aulas que realmente estão na grade daquele aluno
 //     (reaproveita o gerarDatasDaTurma acima, que já sabe ler "Terça-feira",
 //     "Sexta (Quinzenal)" etc.).
@@ -256,6 +258,15 @@ const PARCELAS_POR_POLO = {
   agualimpa: 2
 };
 const numParcelasDoPolo = (poloId) => PARCELAS_POR_POLO[poloId] || 1;
+
+// A cada quantos dias vence o pagamento do pacote (contados da "Data de início das
+// aulas" do polo, aba Horários) — só vale pra polo SEM parcelas (numParcelasDoPolo <= 1).
+// Todo polo que não está aqui cai no padrão de sempre, 14 dias (quinzena). Penha do Côco
+// (Igreja Tabernáculo) foi combinado em 30 dias (mensal).
+const CICLO_VENCIMENTO_DIAS_POR_POLO = {
+  penhadococo: 30
+};
+const cicloVencimentoDiasDoPolo = (poloId) => CICLO_VENCIMENTO_DIAS_POR_POLO[poloId] || 14;
 
 // Valor por aula, pra quando o aluno paga individualmente (fora do pacote da igreja).
 // São Luís, Chalé e Mata Fria vêm direto do planejamento (tabela confirmada em 15/09).
@@ -1804,7 +1815,7 @@ export default function App() {
     if (!polo?.dataInicioAulas) return null;
     const numParcelas = numParcelasDoPolo(igreja.poloId);
     if (numParcelas <= 1) {
-      const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14, 0, !!igreja.pago);
+      const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, cicloVencimentoDiasDoPolo(igreja.poloId), 0, !!igreja.pago);
       return calculo?.vencimento || null;
     }
     let maisProxima = null;
@@ -2448,16 +2459,20 @@ export default function App() {
         let vencimento = null;
         const motivo = 'Falta definir a "Data de início das aulas" desse polo na aba Horários.';
 
+        // Ciclo de vencimento em dias — 14 (quinzena) pra maioria dos polos, mas cada
+        // polo pode ter o próprio combinado (ver CICLO_VENCIMENTO_DIAS_POR_POLO — hoje só
+        // Penha do Côco/Igreja Tabernáculo, 30 dias).
+        const cicloDias = cicloVencimentoDiasDoPolo(localId);
         if (igrejaDoPolo.pago) {
           status = 'pago';
           // Já pagou o ciclo atual — mostra a PRÓXIMA data de pagamento (o ciclo
           // seguinte), em vez de deixar sem nenhuma data.
           if (polo?.dataInicioAulas) {
-            const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14, 0, true);
+            const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, cicloDias, 0, true);
             if (calculo) vencimento = calculo.vencimento;
           }
         } else if (polo?.dataInicioAulas) {
-          const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14);
+          const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, cicloDias);
           if (calculo) {
             vencimento = calculo.vencimento;
             status = calculo.passadoAlgum ? 'atrasado' : 'pendente';
