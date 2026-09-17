@@ -20,7 +20,12 @@ const POLOS_PADRAO = [
   // Igreja Tabernáculo, na localidade de Penha do Côco — um polo totalmente separado
   // de "Mata Fria / Penha do Côco" (não tem nada a ver com ele, mesmo os nomes
   // parecendo iguais; "Pé do Coco" era escrita errada, o nome certo é "Penha do Côco").
-  { id: 'penhadococo', nome: 'Igreja Tabernáculo (Penha do Côco)', descricao: 'Igreja Tabernáculo — pacote fechado mensal.' },
+  {
+  id: 'penhadococo',
+  nome: 'Igreja Tabernáculo (Penha do Côco)',
+  descricao: 'Igreja Tabernáculo — pacote fechado mensal.',
+  dataInicioAulas: '2026-09-24'
+},
   // Vem do "Planejamento Financeiro das Aulas de Música por Polo" (Google Docs).
   { id: 'agualimpa', nome: 'Água Limpa', descricao: 'Igreja Assembleia de Deus — pacote fechado mensal.' }
 ];
@@ -255,7 +260,13 @@ const VALOR_PACOTE_PADRAO_OUTROS = 300;
 const PARCELAS_POR_POLO = {
   agualimpa: 2
 };
-const numParcelasDoPolo = (poloId) => PARCELAS_POR_POLO[poloId] || 1;
+// Prazo de vencimento do pacote por polo.
+const DIAS_VENCIMENTO_PACOTE_POR_POLO = {
+  penhadococo: 30
+};
+
+const diasVencimentoPacoteDoPolo = (poloId) =>
+  DIAS_VENCIMENTO_PACOTE_POR_POLO[poloId] || 14;
 
 // Valor por aula, pra quando o aluno paga individualmente (fora do pacote da igreja).
 // São Luís, Chalé e Mata Fria vêm direto do planejamento (tabela confirmada em 15/09).
@@ -1802,9 +1813,14 @@ export default function App() {
   const proximoVencimentoIgreja = (igreja) => {
     const polo = LOCALIZACOES.find(l => l.id === igreja?.poloId);
     if (!polo?.dataInicioAulas) return null;
-    const numParcelas = numParcelasDoPolo(igreja.poloId);
+    const calculo = calcularVencimentoPeriodico(
+  polo.dataInicioAulas,
+  diasVencimentoPacoteDoPolo(igreja.poloId),
+  0,
+  !!igreja.pago
+);
     if (numParcelas <= 1) {
-      const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14, 0, !!igreja.pago);
+      const calculo =
       return calculo?.vencimento || null;
     }
     let maisProxima = null;
@@ -2453,11 +2469,19 @@ export default function App() {
           // Já pagou o ciclo atual — mostra a PRÓXIMA data de pagamento (o ciclo
           // seguinte), em vez de deixar sem nenhuma data.
           if (polo?.dataInicioAulas) {
-            const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14, 0, true);
+            const calculo = calcularVencimentoPeriodico(
+  polo.dataInicioAulas,
+  diasVencimentoPacoteDoPolo(localId),
+  0,
+  true
+);
             if (calculo) vencimento = calculo.vencimento;
           }
         } else if (polo?.dataInicioAulas) {
-          const calculo = calcularVencimentoPeriodico(polo.dataInicioAulas, 14);
+          const calculo = calcularVencimentoPeriodico(
+  polo.dataInicioAulas,
+  diasVencimentoPacoteDoPolo(localId)
+);
           if (calculo) {
             vencimento = calculo.vencimento;
             status = calculo.passadoAlgum ? 'atrasado' : 'pendente';
