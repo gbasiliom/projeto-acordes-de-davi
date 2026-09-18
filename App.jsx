@@ -6078,9 +6078,10 @@ export default function App() {
               </p>
 
               <p className="text-sm text-slate-700 max-w-xl mx-auto leading-relaxed mb-8">
-                Recebemos de <strong className="text-emerald-900">{itemRecibo.nome}</strong> o valor acima referente ao pagamento{' '}
+                O Projeto Acordes de Davi - Gabriel Basilio de Miranda, CPF 12554043701, dizemos que: "Recebemos de{' '}
+                <strong className="text-emerald-900">{itemRecibo.nome}</strong> o valor acima referente ao pagamento{' '}
                 {itemRecibo.instrumento ? `das aulas de ${itemRecibo.instrumento}` : 'do pacote de aulas'} no Projeto Acordes de Davi, polo{' '}
-                {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}.
+                {LOCALIZACOES.find(l => l.id === itemRecibo.local)?.nome}."
               </p>
 
               {itemRecibo.origem === 'igreja' && (
