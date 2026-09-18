@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil, ClipboardList, TrendingUp } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserSessionPersistence } from 'firebase/auth';
-import { getFirestore, collection, query, where, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
+import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, query, where, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -352,14 +352,28 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
 
-// Login "por sessão", em vez de guardado pra sempre no dispositivo — fecha sozinho
-// quando o aplicativo é encerrado. Assim, seja o login do admin, do Portal do Aluno ou
-// do Portal da Igreja, fechando o app a próxima abertura pede login de novo, em vez de
-// continuar entrando direto na conta de quem usou por último (importante porque várias
-// pessoas diferentes podem abrir esse mesmo app/computador).
-setPersistence(auth, browserSessionPersistence).catch((err) => {
+// Firestore com cache offline: guarda no próprio aparelho os dados que já foram
+// carregados (turmas, alunos, pagamentos etc.) e permite continuar USANDO o app sem
+// internet — tanto pra ver o que já tinha carregado quanto pra fazer ações (como marcar
+// presença numa aula). Toda ação feita offline fica guardada localmente e é enviada pro
+// banco de dados automaticamente assim que a internet voltar, sem precisar refazer nada.
+// "persistentMultipleTabManager" evita erro quando a pessoa abre o sistema em mais de
+// uma aba/janela ao mesmo tempo no mesmo aparelho.
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+});
+
+// Login guardado no aparelho (em vez de só "por sessão") — precisa ficar logado sem
+// precisar de internet pra entrar de novo, já que tanto o professor quanto os alunos usam
+// o app em lugares sem acesso à internet. Com isso, uma vez que a pessoa loga (isso ainda
+// precisa de internet na primeira vez), o app continua reconhecendo o login mesmo depois
+// de fechado/reaberto, com ou sem internet.
+// Importante: como o login agora NÃO fecha sozinho, em um aparelho/computador usado por
+// várias pessoas diferentes (admin, professor, alunos) é preciso clicar em "Sair da Conta"
+// antes de entregar o aparelho pra outra pessoa usar — senão ela continua vendo a conta
+// de quem usou por último.
+setPersistence(auth, browserLocalPersistence).catch((err) => {
   console.error('Erro ao configurar a persistência do login:', err);
 });
 
@@ -368,6 +382,24 @@ export default function App() {
   const [vagasOcupadas, setVagasOcupadas] = useState([]);
   const [turmasCadastradas, setTurmasCadastradas] = useState([]);
   const [polosCadastrados, setPolosCadastrados] = useState([]);
+
+  // Aviso de "sem internet" — aparece em cima de tudo quando o aparelho perde conexão,
+  // pra deixar claro pra quem não é técnico (professor, aluno) que os dados na tela podem
+  // estar desatualizados e que qualquer ação feita agora (ex.: marcar presença) vai ficar
+  // guardada no aparelho e enviada pro sistema automaticamente quando a internet voltar.
+  const [estaOnline, setEstaOnline] = useState(() => (
+    typeof navigator === 'undefined' || typeof navigator.onLine !== 'boolean' ? true : navigator.onLine
+  ));
+  useEffect(() => {
+    const marcarOnline = () => setEstaOnline(true);
+    const marcarOffline = () => setEstaOnline(false);
+    window.addEventListener('online', marcarOnline);
+    window.addEventListener('offline', marcarOffline);
+    return () => {
+      window.removeEventListener('online', marcarOnline);
+      window.removeEventListener('offline', marcarOffline);
+    };
+  }, []);
 
   // Formulário de "novo integrante" da aba Banda — um rascunho por polo (nome +
   // função), só some/reseta depois de clicar em "Adicionar".
@@ -2706,6 +2738,11 @@ export default function App() {
 
   return (
     <>
+      {!estaOnline && (
+        <div className="fixed top-0 left-0 right-0 z-[9998] bg-amber-500 text-white text-center text-xs sm:text-sm font-semibold py-1.5 px-3 shadow-md">
+          Sem internet no momento — você continua vendo os dados já carregados e qualquer ação (como marcar presença) fica guardada e é enviada automaticamente quando a internet voltar.
+        </div>
+      )}
       {mostrarVinheta && (
         <div className="fixed inset-0 z-[9999] bg-black flex items-center justify-center">
           <video
