@@ -2291,6 +2291,79 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  // --- Exportar contatos dos alunos por polo, pra importar no telefone e adicionar em
+  // massa nos grupos/listas de transmissão do WhatsApp -----------------------------------
+  // O WhatsApp não tem um jeito de "colar uma lista de números" direto — ele sempre lê os
+  // contatos já salvos no telefone. Por isso a exportação aqui não é uma lista simples: é
+  // um arquivo .vcf (cartão de contato/vCard), o formato padrão que o app de Contatos do
+  // celular (Android ou iPhone) sabe importar de uma vez só. Depois de importado, os
+  // alunos aparecem como contatos normais e já dá pra selecionar todo mundo de um polo de
+  // uma vez pra criar um grupo ou lista de transmissão no WhatsApp.
+
+  // Tenta reconhecer um número de celular brasileiro (DDD + número, com ou sem "55" na
+  // frente, com ou sem parênteses/traço/espaço no meio) e devolve só dígitos, sempre com
+  // "55" na frente — é o formato que o WhatsApp/Contatos espera pra reconhecer o número.
+  // Se o texto não bater com nenhum padrão conhecido, devolve só os dígitos como vieram
+  // (sem inventar DDD nem descartar o contato só por causa de um formato diferente).
+  const normalizarTelefoneContato = (bruto) => {
+    const digitos = (bruto || '').replace(/\D/g, '');
+    if (!digitos) return null;
+    if (digitos.startsWith('55') && (digitos.length === 12 || digitos.length === 13)) return digitos;
+    if (digitos.length === 10 || digitos.length === 11) return `55${digitos}`;
+    return digitos;
+  };
+
+  // Agrupa por polo os alunos com telefone cadastrado, um contato por nome+telefone
+  // (mesma lógica de "mesmo aluno com 2 aulas" usada em gruposDuplicados, pra não gerar
+  // um cartão de contato repetido pra quem faz mais de um instrumento no mesmo polo).
+  const contatosUnicosPorPolo = useMemo(() => {
+    const mapa = new Map();
+    agendamentos.forEach(item => {
+      const telefone = normalizarTelefoneContato(item.telefone);
+      if (!telefone || !item.nome) return;
+      const poloId = item.local;
+      if (!mapa.has(poloId)) mapa.set(poloId, new Map());
+      const chave = `${normalizarTexto(item.nome)}|${telefone}`;
+      if (!mapa.get(poloId).has(chave)) {
+        mapa.get(poloId).set(chave, { nome: item.nome.trim(), telefone });
+      }
+    });
+    return mapa;
+  }, [agendamentos]);
+
+  const gerarConteudoVcf = (contatos) => contatos.map(c => (
+    `BEGIN:VCARD\nVERSION:3.0\nFN:${c.nome}\nTEL;TYPE=CELL:+${c.telefone}\nEND:VCARD`
+  )).join('\n');
+
+  const baixarArquivoTexto = (conteudo, nomeArquivo, tipo) => {
+    const blob = new Blob([conteudo], { type: tipo });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nomeArquivo;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportarContatosPolo = (poloId) => {
+    const contatos = Array.from(contatosUnicosPorPolo.get(poloId)?.values() || []);
+    if (contatos.length === 0) return;
+    const nomePolo = LOCALIZACOES.find(l => l.id === poloId)?.nome || poloId;
+    baixarArquivoTexto(gerarConteudoVcf(contatos), `contatos-${normalizarTexto(nomePolo)}.vcf`, 'text/vcard');
+  };
+
+  const exportarContatosTodosPolos = () => {
+    const todos = [];
+    contatosUnicosPorPolo.forEach((mapaContatos, poloId) => {
+      const nomePolo = LOCALIZACOES.find(l => l.id === poloId)?.nome || poloId;
+      mapaContatos.forEach(c => todos.push({ ...c, nome: `${c.nome} (${nomePolo})` }));
+    });
+    if (todos.length === 0) return;
+    baixarArquivoTexto(gerarConteudoVcf(todos), 'contatos-todos-os-polos.vcf', 'text/vcard');
+  };
+
   const agendamentosFiltrados = agendamentos.filter(item => {
     const matchLocal = filtroLocal === 'todos' || item.local === filtroLocal;
     const matchInst = filtroInstrumento === 'todos' || item.instrumento === filtroInstrumento;
@@ -3104,6 +3177,46 @@ export default function App() {
                 <Upload className="w-4 h-4" /> Selecionar Planilha
                 <input type="file" accept=".csv" onChange={handleMigrarSaoLuiz} className="hidden" />
               </label>
+            </div>
+
+            <div className="bg-sky-50 border border-sky-200 p-4 rounded-xl space-y-3">
+              <div className="flex items-center gap-3">
+                <Users className="w-8 h-8 text-sky-700 shrink-0" />
+                <div>
+                  <h3 className="text-sm font-bold text-sky-900">Exportar contatos por polo (pra WhatsApp)</h3>
+                  <p className="text-xs text-sky-700">
+                    Baixa um arquivo .vcf (cartão de contato) por polo. Importe esse arquivo no app de
+                    Contatos do seu celular — os alunos aparecem como contatos normais e daí já dá pra
+                    selecionar todos de um polo de uma vez pra criar um grupo ou lista de transmissão no WhatsApp.
+                  </p>
+                </div>
+              </div>
+              {contatosUnicosPorPolo.size === 0 ? (
+                <p className="text-xs text-sky-600 italic">Nenhum aluno com telefone cadastrado ainda.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {LOCALIZACOES.map(local => {
+                    const qtd = contatosUnicosPorPolo.get(local.id)?.size || 0;
+                    if (qtd === 0) return null;
+                    return (
+                      <button
+                        key={local.id}
+                        onClick={() => exportarContatosPolo(local.id)}
+                        title={`Baixar contatos (.vcf) — ${local.nome}`}
+                        className="bg-white hover:bg-sky-100 text-sky-800 border border-sky-300 px-3 py-2 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 shadow-sm"
+                      >
+                        <Download className="w-3.5 h-3.5" /> {local.nome} ({qtd})
+                      </button>
+                    );
+                  })}
+                  <button
+                    onClick={exportarContatosTodosPolos}
+                    className="bg-sky-700 hover:bg-sky-800 text-white px-3 py-2 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Download className="w-3.5 h-3.5" /> Todos os polos (um arquivo só)
+                  </button>
+                </div>
+              )}
             </div>
 
             {mensagemImportacao && (
