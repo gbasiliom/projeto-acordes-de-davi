@@ -24,7 +24,8 @@
 // notificação sem corpo com Content-Type de JSON faz a própria Vercel devolver erro 400
 // ANTES do código abaixo rodar (foi exatamente isso que aconteceu: a Vercel recusava a
 // notificação sozinha, sem nem chegar a chamar essa função).
-const { getDb } = require('../_firebaseAdmin');
+const { getDb, getAuthAdmin } = require('../_firebaseAdmin');
+const { processarRecibo } = require('../_recibos');
 const crypto = require('crypto');
 
 // Confere a assinatura enviada pelo Mercado Pago, quando a variável de ambiente
@@ -106,16 +107,31 @@ async function handler(req, res) {
       : db.collection('agendamentos').doc(referencia);
 
     if (pagamento.status === 'approved') {
-      await docRef.set(
-        {
-          pago: true,
-          formaPagamento: 'pix',
-          dataPagamento: new Date().toISOString().slice(0, 10),
-          statusPagamentoMP: 'approved',
-          valorPago: pagamento.transaction_amount
-        },
-        { merge: true }
-      );
+      const dadosAtualizados = {
+        pago: true,
+        formaPagamento: 'pix',
+        dataPagamento: new Date().toISOString().slice(0, 10),
+        statusPagamentoMP: 'approved',
+        valorPago: pagamento.transaction_amount
+      };
+      await docRef.set(dadosAtualizados, { merge: true });
+
+      // Dispara o recibo automaticamente — zero clique, ninguém precisa fazer nada.
+      // Roda depois de já ter confirmado o pagamento no Firestore, e nunca deixa um
+      // problema no envio do e-mail derrubar a resposta 200 pro Mercado Pago (senão
+      // ele fica reenviando a mesma notificação sem parar).
+      try {
+        const snapAtual = await docRef.get();
+        await processarRecibo({
+          db,
+          authAdmin: getAuthAdmin(),
+          tipo: ehIgreja ? 'igreja' : 'agendamento',
+          id: docRef.id,
+          dados: snapAtual.data()
+        });
+      } catch (errRecibo) {
+        console.error('Erro ao disparar recibo automático pelo webhook:', errRecibo);
+      }
     } else {
       await docRef.set({ statusPagamentoMP: pagamento.status }, { merge: true });
     }
