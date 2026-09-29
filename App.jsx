@@ -1137,11 +1137,32 @@ export default function App() {
     }
   };
 
+  // Dispara o e-mail automático do recibo (função serverless api/recibos/enviar) sem
+  // travar a tela: se o e-mail falhar (ex: RESEND_API_KEY ainda não configurada na
+  // Vercel), o pagamento continua marcado como pago normalmente — só fica faltando
+  // reenviar depois. Pagamentos feitos por Pix dentro do site já disparam esse mesmo
+  // e-mail sozinhos, direto do webhook do Mercado Pago; isso aqui cobre o caminho
+  // manual (dinheiro, Pix combinado fora do site, etc.).
+  const dispararReciboAutomatico = async (corpo) => {
+    try {
+      const idToken = await usuario.getIdToken();
+      await fetch('/api/recibos/enviar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify(corpo)
+      });
+    } catch (err) {
+      console.error('Erro ao disparar recibo automático:', err);
+    }
+  };
+
   const alternarPagamento = async (id, statusAtual) => {
     try {
+      const novoStatus = !statusAtual;
       await updateDoc(doc(db, 'agendamentos', id), {
-        pago: !statusAtual
+        pago: novoStatus
       });
+      if (novoStatus) dispararReciboAutomatico({ agendamentoId: id });
     } catch (err) {
       console.error("Erro ao atualizar pagamento:", err);
     }
@@ -2155,7 +2176,9 @@ export default function App() {
 
   const alternarPagamentoIgreja = async (id, statusAtual) => {
     try {
-      await updateDoc(doc(db, 'igrejas', id), { pago: !statusAtual });
+      const novoStatus = !statusAtual;
+      await updateDoc(doc(db, 'igrejas', id), { pago: novoStatus });
+      if (novoStatus) dispararReciboAutomatico({ igrejaId: id });
     } catch (err) {
       console.error('Erro ao atualizar pagamento da igreja:', err);
     }
@@ -2362,6 +2385,82 @@ export default function App() {
     });
     if (todos.length === 0) return;
     baixarArquivoTexto(gerarConteudoVcf(todos), 'contatos-todos-os-polos.vcf', 'text/vcard');
+  };
+
+  const formatarTelefoneExibicao = (digitos) => {
+    if (!digitos) return '';
+    let resto = digitos;
+    let prefixo = '';
+    if (digitos.startsWith('55') && (digitos.length === 12 || digitos.length === 13)) {
+      prefixo = '+55 ';
+      resto = digitos.slice(2);
+    }
+    if (resto.length === 10 || resto.length === 11) {
+      const ddd = resto.slice(0, 2);
+      const numero = resto.slice(2);
+      const meio = numero.length === 9 ? numero.slice(0, 5) : numero.slice(0, 4);
+      const fim = numero.length === 9 ? numero.slice(5) : numero.slice(4);
+      return `${prefixo}(${ddd}) ${meio}-${fim}`;
+    }
+    return prefixo + resto;
+  };
+
+  const gerarPdfListaContatos = (tituloArquivo, grupos) => {
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const margemMm = 18;
+    const larguraPagina = pdf.internal.pageSize.getWidth();
+    const alturaPagina = pdf.internal.pageSize.getHeight();
+    let y = margemMm;
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(16);
+    pdf.text('Projeto Acordes de Davi', margemMm, y);
+    y += 7;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(11);
+    pdf.setTextColor(90, 90, 90);
+    pdf.text(`Lista de contatos — gerado em ${new Date().toLocaleDateString('pt-BR')}`, margemMm, y);
+    y += 10;
+    pdf.setTextColor(20, 20, 20);
+    grupos.forEach((grupo) => {
+      if (y > alturaPagina - margemMm - 16) { pdf.addPage(); y = margemMm; }
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(13);
+      pdf.text(`${grupo.polo} (${grupo.contatos.length})`, margemMm, y);
+      y += 3;
+      pdf.setDrawColor(200, 200, 200);
+      pdf.line(margemMm, y, larguraPagina - margemMm, y);
+      y += 6;
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(11);
+      grupo.contatos.forEach((contato) => {
+        if (y > alturaPagina - margemMm) { pdf.addPage(); y = margemMm; }
+        pdf.text(contato.nome, margemMm, y);
+        pdf.text(formatarTelefoneExibicao(contato.telefone), larguraPagina - margemMm, y, { align: 'right' });
+        y += 7;
+      });
+      y += 6;
+    });
+    pdf.save(`contatos-${normalizarTexto(tituloArquivo)}.pdf`);
+  };
+
+  const exportarContatosPdfPolo = (poloId) => {
+    const contatos = Array.from(contatosUnicosPorPolo.get(poloId)?.values() || [])
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    if (contatos.length === 0) return;
+    const nomePolo = LOCALIZACOES.find(l => l.id === poloId)?.nome || poloId;
+    gerarPdfListaContatos(nomePolo, [{ polo: nomePolo, contatos }]);
+  };
+
+  const exportarContatosPdfTodosPolos = () => {
+    const grupos = [];
+    contatosUnicosPorPolo.forEach((mapaContatos, poloId) => {
+      const nomePolo = LOCALIZACOES.find(l => l.id === poloId)?.nome || poloId;
+      const contatos = Array.from(mapaContatos.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+      if (contatos.length > 0) grupos.push({ polo: nomePolo, contatos });
+    });
+    if (grupos.length === 0) return;
+    grupos.sort((a, b) => a.polo.localeCompare(b.polo, 'pt-BR'));
+    gerarPdfListaContatos('Todos os Polos', grupos);
   };
 
   const agendamentosFiltrados = agendamentos.filter(item => {
@@ -3188,6 +3287,7 @@ export default function App() {
                     Baixa um arquivo .vcf (cartão de contato) por polo. Importe esse arquivo no app de
                     Contatos do seu celular — os alunos aparecem como contatos normais e daí já dá pra
                     selecionar todos de um polo de uma vez pra criar um grupo ou lista de transmissão no WhatsApp.
+                    Também dá pra baixar a mesma lista em PDF, pra imprimir ou compartilhar.
                   </p>
                 </div>
               </div>
@@ -3199,22 +3299,39 @@ export default function App() {
                     const qtd = contatosUnicosPorPolo.get(local.id)?.size || 0;
                     if (qtd === 0) return null;
                     return (
-                      <button
-                        key={local.id}
-                        onClick={() => exportarContatosPolo(local.id)}
-                        title={`Baixar contatos (.vcf) — ${local.nome}`}
-                        className="bg-white hover:bg-sky-100 text-sky-800 border border-sky-300 px-3 py-2 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 shadow-sm"
-                      >
-                        <Download className="w-3.5 h-3.5" /> {local.nome} ({qtd})
-                      </button>
+                      <div key={local.id} className="inline-flex items-stretch rounded-lg overflow-hidden border border-sky-300 shadow-sm">
+                        <button
+                          onClick={() => exportarContatosPolo(local.id)}
+                          title={`Baixar contatos (.vcf) — ${local.nome}`}
+                          className="bg-white hover:bg-sky-100 text-sky-800 px-3 py-2 text-xs font-semibold transition inline-flex items-center gap-1.5"
+                        >
+                          <Download className="w-3.5 h-3.5" /> {local.nome} ({qtd})
+                        </button>
+                        <button
+                          onClick={() => exportarContatosPdfPolo(local.id)}
+                          title={`Baixar contatos (.pdf) — ${local.nome}`}
+                          className="bg-sky-100 hover:bg-sky-200 text-sky-800 px-2.5 py-2 text-xs font-semibold transition inline-flex items-center gap-1 border-l border-sky-300"
+                        >
+                          <FileText className="w-3.5 h-3.5" /> PDF
+                        </button>
+                      </div>
                     );
                   })}
-                  <button
-                    onClick={exportarContatosTodosPolos}
-                    className="bg-sky-700 hover:bg-sky-800 text-white px-3 py-2 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 shadow-sm"
-                  >
-                    <Download className="w-3.5 h-3.5" /> Todos os polos (um arquivo só)
-                  </button>
+                  <div className="inline-flex items-stretch rounded-lg overflow-hidden shadow-sm">
+                    <button
+                      onClick={exportarContatosTodosPolos}
+                      className="bg-sky-700 hover:bg-sky-800 text-white px-3 py-2 text-xs font-semibold transition inline-flex items-center gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Todos os polos (um arquivo só)
+                    </button>
+                    <button
+                      onClick={exportarContatosPdfTodosPolos}
+                      title="Baixar contatos (.pdf) — todos os polos"
+                      className="bg-sky-900 hover:bg-sky-950 text-white px-2.5 py-2 text-xs font-semibold transition inline-flex items-center gap-1 border-l border-sky-600"
+                    >
+                      <FileText className="w-3.5 h-3.5" /> PDF
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
