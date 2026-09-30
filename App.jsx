@@ -456,6 +456,7 @@ export default function App() {
   // --- Gestão de horários (admin) ---
   const [novaTurma, setNovaTurma] = useState({ local: 'saoluiz', instrumento: 'violao', dia: '', inicio: '', fim: '', duracao: 40 });
   const [erroTurma, setErroTurma] = useState('');
+  const [avisoTurma, setAvisoTurma] = useState('');
   const [salvandoTurma, setSalvandoTurma] = useState(false);
 
   // --- Gestão de polos (admin) ---
@@ -1733,33 +1734,63 @@ export default function App() {
 
   // Cria uma nova turma (dia + faixa de horário) pra um polo/instrumento — só o admin
   // consegue fazer isso (regra do Firestore); os alunos só escolhem entre o que já existe.
+  //
+  // IMPORTANTE: se já existe uma turma com o mesmo polo+instrumento+dia, os horários
+  // novos são ADICIONADOS dentro dela (em vez de criar uma turma separada e duplicada).
+  // Antes, esse formulário sempre criava uma turma nova — então toda vez que o admin
+  // queria só abrir mais um horário num dia que já tinha turma, acabava criando outra
+  // turma do mesmo dia em vez de só aumentar a existente. Isso desfazia qualquer
+  // organização feita antes (ex: juntar turmas espalhadas em uma só por instrumento).
   const adicionarTurma = async (e) => {
     e.preventDefault();
     setErroTurma('');
+    setAvisoTurma('');
 
     if (!novaTurma.dia.trim() || !novaTurma.inicio || !novaTurma.fim) {
       setErroTurma('Preencha o nome do dia/grupo e os horários de início e fim.');
       return;
     }
     const duracao = Number(novaTurma.duracao) || 40;
-    const horarios = gerarHorarios(novaTurma.inicio, novaTurma.fim, duracao);
-    if (horarios.length === 0) {
+    const horariosNovos = gerarHorarios(novaTurma.inicio, novaTurma.fim, duracao);
+    if (horariosNovos.length === 0) {
       setErroTurma('Não deu pra gerar nenhum horário com esses valores — confira início, fim e duração.');
       return;
     }
 
+    const diaDigitado = novaTurma.dia.trim();
+    const turmaExistente = turmasCadastradas.find(
+      (t) => t.local === novaTurma.local && t.instrumento === novaTurma.instrumento && (t.dia || '').trim() === diaDigitado
+    );
+
     setSalvandoTurma(true);
     try {
-      await addDoc(collection(db, 'turmas'), {
-        local: novaTurma.local,
-        instrumento: novaTurma.instrumento,
-        dia: novaTurma.dia.trim(),
-        horarios,
-        criadoEm: new Date().toISOString()
-      });
+      if (turmaExistente) {
+        // Já existe turma com esse polo+instrumento+dia — junta os horários novos
+        // dentro dela em vez de criar uma turma duplicada. Não duplica horário que já
+        // exista (mesmo valor de início).
+        const valoresJaExistentes = new Set((turmaExistente.horarios || []).map((h) => h.value));
+        const horariosParaAdicionar = horariosNovos.filter((h) => !valoresJaExistentes.has(h.value));
+        if (horariosParaAdicionar.length === 0) {
+          setAvisoTurma(`A turma "${diaDigitado}" já tinha todos esses horários — nada novo foi adicionado.`);
+        } else {
+          const horariosFinal = [...(turmaExistente.horarios || []), ...horariosParaAdicionar]
+            .sort((a, b) => a.value.localeCompare(b.value));
+          await updateDoc(doc(db, 'turmas', turmaExistente.id), { horarios: horariosFinal });
+          setAvisoTurma(`Já existia uma turma "${diaDigitado}" pra esse polo/instrumento — adicionei ${horariosParaAdicionar.length} horário(s) novo(s) nela em vez de criar uma turma separada.`);
+        }
+      } else {
+        await addDoc(collection(db, 'turmas'), {
+          local: novaTurma.local,
+          instrumento: novaTurma.instrumento,
+          dia: diaDigitado,
+          horarios: horariosNovos,
+          criadoEm: new Date().toISOString()
+        });
+      }
       setNovaTurma({ local: novaTurma.local, instrumento: novaTurma.instrumento, dia: '', inicio: '', fim: '', duracao: 40 });
+      setTimeout(() => setAvisoTurma(''), 8000);
     } catch (err) {
-      console.error('Erro ao criar turma:', err);
+      console.error('Erro ao criar/atualizar turma:', err);
       setErroTurma('Erro ao salvar a turma. Tente novamente.');
     } finally {
       setSalvandoTurma(false);
@@ -4445,6 +4476,12 @@ export default function App() {
                   <span>{erroTurma}</span>
                 </div>
               )}
+              {avisoTurma && (
+                <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                  <Clock className="w-4 h-4 shrink-0" />
+                  <span>{avisoTurma}</span>
+                </div>
+              )}
 
               <form onSubmit={adicionarTurma} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end bg-slate-50 p-4 rounded-lg border border-slate-200">
                 <div className="lg:col-span-1">
@@ -4517,7 +4554,7 @@ export default function App() {
                 </div>
               </form>
               <p className="text-xs text-slate-400 mt-2">
-                Pra um dia com intervalo (ex: almoço), cria duas turmas com o mesmo nome de dia e horários diferentes — elas aparecem juntas pro aluno.
+                Se já existe uma turma com esse mesmo polo + instrumento + dia, os horários novos entram dentro dela — não cria uma turma duplicada. Pra um dia com intervalo (ex: almoço), pode preencher esse formulário de novo com o mesmo nome de dia e o outro intervalo de horário — os dois entram na mesma turma automaticamente.
               </p>
             </div>
 
