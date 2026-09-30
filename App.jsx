@@ -1168,18 +1168,23 @@ export default function App() {
   // o mesmo número se dois cliques (ou um clique + um Pix aprovado) acontecerem quase
   // juntos. A mesma lógica existe também no back-end (api/_recibos.js), pro caminho
   // 100% automático do Pix aprovado pelo webhook, que nunca passa por aqui.
-  const garantirNumeroRecibo = async (colecao, id) => {
+  // "campo" é sempre "numeroRecibo", EXCETO nas parcelas de pacote dividido (Água
+  // Limpa, 2x), onde cada parcela precisa do próprio número (senão a parcela 2
+  // sobrescreveria o número da parcela 1 no mesmo documento da igreja) — nesse caso
+  // usamos "parcela1NumeroRecibo", "parcela2NumeroRecibo", etc., mas todas continuam
+  // puxando do MESMO contador central, então o número nunca se repete entre elas.
+  const garantirNumeroRecibo = async (colecao, id, campo = 'numeroRecibo') => {
     if (!id) return null;
     const refDocumento = doc(db, colecao, id);
     const refContador = doc(db, 'contadores', 'recibos');
     return runTransaction(db, async (transacao) => {
       const snapDocumento = await transacao.get(refDocumento);
-      const numeroExistente = snapDocumento.data()?.numeroRecibo;
+      const numeroExistente = snapDocumento.data()?.[campo];
       if (numeroExistente) return numeroExistente;
       const snapContador = await transacao.get(refContador);
       const proximoNumero = (Number(snapContador.data()?.ultimoNumero) || 0) + 1;
       transacao.set(refContador, { ultimoNumero: proximoNumero }, { merge: true });
-      transacao.update(refDocumento, { numeroRecibo: proximoNumero });
+      transacao.update(refDocumento, { [campo]: proximoNumero });
       return proximoNumero;
     });
   };
@@ -2262,7 +2267,13 @@ export default function App() {
 
   const alternarPagamentoParcelaIgreja = async (id, numeroParcela, statusAtual) => {
     try {
-      await updateDoc(doc(db, 'igrejas', id), { [`parcela${numeroParcela}Pago`]: !statusAtual });
+      const novoStatus = !statusAtual;
+      await updateDoc(doc(db, 'igrejas', id), { [`parcela${numeroParcela}Pago`]: novoStatus });
+      if (novoStatus) {
+        try { await garantirNumeroRecibo('igrejas', id, `parcela${numeroParcela}NumeroRecibo`); } catch (errNumero) {
+          console.error('Erro ao gerar o número do recibo da parcela:', errNumero);
+        }
+      }
     } catch (err) {
       console.error('Erro ao atualizar pagamento da parcela:', err);
     }
@@ -2805,7 +2816,11 @@ export default function App() {
           valor,
           vencimento,
           status,
-          motivo
+          motivo,
+          // Cada parcela tem o próprio número de controle (campo "parcelaNNumeroRecibo"),
+          // sem botão de "ver recibo" — o pacote dividido não tem uma tela de recibo por
+          // parcela hoje, só o número serve pra achar rápido numa planilha/conversa.
+          numeroRecibo: igrejaDoPolo[`parcela${n}NumeroRecibo`] || null
         });
       }
     });
