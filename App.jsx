@@ -1156,13 +1156,46 @@ export default function App() {
     }
   };
 
+  // Número sequencial de controle do recibo (pra achar rápido numa conversa, planilha,
+  // etc — tipo um talão de recibo de papel: 1, 2, 3...). Guardado direto no documento
+  // do agendamento (aluno individual) ou da igreja (pacote), no campo "numeroRecibo",
+  // e o "próximo número" fica só num contador central em "contadores/recibos" (campo
+  // "ultimoNumero"). É IDEMPOTENTE: se o documento já tem um número (porque esse mesmo
+  // pagamento já gerou recibo antes, seja na tela ou pelo e-mail automático), devolve
+  // esse mesmo número de novo em vez de andar o contador — assim, gerar o recibo de
+  // novo (reabrir, reenviar) NUNCA cria um número novo pro mesmo pagamento. Roda dentro
+  // de uma transação do Firestore pra não correr o risco de dois pagamentos saírem com
+  // o mesmo número se dois cliques (ou um clique + um Pix aprovado) acontecerem quase
+  // juntos. A mesma lógica existe também no back-end (api/_recibos.js), pro caminho
+  // 100% automático do Pix aprovado pelo webhook, que nunca passa por aqui.
+  const garantirNumeroRecibo = async (colecao, id) => {
+    if (!id) return null;
+    const refDocumento = doc(db, colecao, id);
+    const refContador = doc(db, 'contadores', 'recibos');
+    return runTransaction(db, async (transacao) => {
+      const snapDocumento = await transacao.get(refDocumento);
+      const numeroExistente = snapDocumento.data()?.numeroRecibo;
+      if (numeroExistente) return numeroExistente;
+      const snapContador = await transacao.get(refContador);
+      const proximoNumero = (Number(snapContador.data()?.ultimoNumero) || 0) + 1;
+      transacao.set(refContador, { ultimoNumero: proximoNumero }, { merge: true });
+      transacao.update(refDocumento, { numeroRecibo: proximoNumero });
+      return proximoNumero;
+    });
+  };
+
   const alternarPagamento = async (id, statusAtual) => {
     try {
       const novoStatus = !statusAtual;
       await updateDoc(doc(db, 'agendamentos', id), {
         pago: novoStatus
       });
-      if (novoStatus) dispararReciboAutomatico({ agendamentoId: id });
+      if (novoStatus) {
+        try { await garantirNumeroRecibo('agendamentos', id); } catch (errNumero) {
+          console.error('Erro ao gerar o número do recibo:', errNumero);
+        }
+        dispararReciboAutomatico({ agendamentoId: id });
+      }
     } catch (err) {
       console.error("Erro ao atualizar pagamento:", err);
     }
@@ -1223,33 +1256,47 @@ export default function App() {
   // combinado tem uma data definida, direto do card do aluno na aba Pagamentos. Se você já
   // combinou um valor específico (campo "Valor combinado" mais abaixo), usa ele em vez do
   // valor padrão do tipo, pra bater com o que realmente foi cobrado.
-  const abrirRecibo = (item) => {
+  const abrirRecibo = async (item) => {
     const polo = LOCALIZACOES.find(l => l.id === item.local);
     setQuantidadeAulasRecibo(1);
     const valorPadrao = item.valorCombinado != null && item.valorCombinado !== ''
       ? item.valorCombinado
       : valorSugeridoRecibo(item, polo, 1);
     setValorRecibo(String(valorPadrao));
-    setItemRecibo({ ...item, origem: 'aluno' });
+    // Já garante o número de controle assim que o recibo é aberto (não só quando
+    // marca como pago) — cobre o caso de gerar o recibo antes de marcar como pago
+    // (o botão "Gerar Recibo" só exige uma data de pagamento definida, não o status
+    // "pago" em si).
+    let numeroRecibo = item.numeroRecibo || null;
+    try { numeroRecibo = await garantirNumeroRecibo('agendamentos', item.id); } catch (err) {
+      console.error('Erro ao gerar o número do recibo:', err);
+    }
+    setItemRecibo({ ...item, origem: 'aluno', numeroRecibo });
   };
 
   // Recibo de pagamento em pacote sai em nome da IGREJA mantenedora do polo, não do
   // aluno individual — já que a cobrança do pacote agora é consolidada por igreja
   // (aba Igrejas), em vez de cobrada aluno por aluno. Chamado direto do card da igreja.
-  const abrirReciboIgreja = (igreja) => {
+  const abrirReciboIgreja = async (igreja) => {
     setQuantidadeAulasRecibo(1);
     const valorPadrao = igreja.valorCombinado != null && igreja.valorCombinado !== ''
       ? igreja.valorCombinado
       : (VALOR_PACOTE_POR_POLO[igreja.poloId] ?? VALOR_PACOTE_PADRAO_OUTROS);
     setValorRecibo(String(valorPadrao));
+    let numeroRecibo = igreja.numeroRecibo || null;
+    try { numeroRecibo = await garantirNumeroRecibo('igrejas', igreja.id); } catch (err) {
+      console.error('Erro ao gerar o número do recibo:', err);
+    }
     setItemRecibo({
+      id: igreja.id,
       origem: 'igreja',
       nome: igreja.nome,
       local: igreja.poloId,
       tipoPagamento: 'pacote',
       formaPagamento: igreja.formaPagamento,
       dataPagamento: igreja.dataPagamento,
-      valorCombinado: igreja.valorCombinado
+      valorCombinado: igreja.valorCombinado,
+      numeroRecibo
     });
   };
 
@@ -2178,7 +2225,12 @@ export default function App() {
     try {
       const novoStatus = !statusAtual;
       await updateDoc(doc(db, 'igrejas', id), { pago: novoStatus });
-      if (novoStatus) dispararReciboAutomatico({ igrejaId: id });
+      if (novoStatus) {
+        try { await garantirNumeroRecibo('igrejas', id); } catch (errNumero) {
+          console.error('Erro ao gerar o número do recibo:', errNumero);
+        }
+        dispararReciboAutomatico({ igrejaId: id });
+      }
     } catch (err) {
       console.error('Erro ao atualizar pagamento da igreja:', err);
     }
@@ -2625,7 +2677,21 @@ export default function App() {
           }
         }
 
-        linhas.push({ tipo: 'individual', nome: item.nome, local: polo?.nome || item.local, valor, vencimento, status, motivo });
+        linhas.push({
+          tipo: 'individual',
+          nome: item.nome,
+          local: polo?.nome || item.local,
+          valor,
+          vencimento,
+          status,
+          motivo,
+          // Pra aba Financeiro mostrar/gerar o número de controle do recibo (mesmo
+          // número que sai no cartão em tela e no e-mail automático) sem duplicar a
+          // lógica de "abrir recibo" — reaproveita abrirRecibo com o item original.
+          numeroRecibo: item.numeroRecibo || null,
+          origem: 'individual',
+          itemOriginal: item
+        });
       });
 
     // Pacote/igreja — um item por polo que tenha pelo menos um aluno em pacote,
@@ -2683,7 +2749,18 @@ export default function App() {
           }
         }
 
-        linhas.push({ tipo: 'pacote', nome: igrejaDoPolo.nome || polo?.nome || localId, local: polo?.nome || localId, valor, vencimento, status, motivo });
+        linhas.push({
+          tipo: 'pacote',
+          nome: igrejaDoPolo.nome || polo?.nome || localId,
+          local: polo?.nome || localId,
+          valor,
+          vencimento,
+          status,
+          motivo,
+          numeroRecibo: igrejaDoPolo.numeroRecibo || null,
+          origem: 'igreja',
+          itemOriginal: igrejaDoPolo
+        });
         return;
       }
 
@@ -4708,6 +4785,9 @@ export default function App() {
                           <p className="text-sm font-bold text-slate-800 truncate">{linha.nome}</p>
                           <p className="text-xs text-slate-500">
                             {linha.tipo === 'individual' ? 'Individual' : 'Pacote/Igreja'} · {linha.local}
+                            {linha.numeroRecibo && (
+                              <span className="ml-2 text-emerald-700 font-semibold">· Recibo Nº {String(linha.numeroRecibo).padStart(6, '0')}</span>
+                            )}
                           </p>
                           {secao.chave === 'semDados' && linha.motivo && (
                             <p className="text-[10px] text-slate-400 mt-0.5">{linha.motivo}</p>
@@ -4719,6 +4799,16 @@ export default function App() {
                             <p className="text-[10px] text-slate-400">
                               {secao.chave === 'pago' ? 'Próximo vencimento' : 'Vencimento'}: {new Date(`${linha.vencimento}T00:00:00`).toLocaleDateString('pt-BR')}
                             </p>
+                          )}
+                          {/* Só faz sentido gerar/ver o recibo de quem já está pago — pendente/atrasado
+                              ainda não teve pagamento pra emitir recibo de nada. */}
+                          {secao.chave === 'pago' && linha.itemOriginal && (
+                            <button
+                              onClick={() => linha.origem === 'igreja' ? abrirReciboIgreja(linha.itemOriginal) : abrirRecibo(linha.itemOriginal)}
+                              className="mt-1 text-[10px] font-bold text-emerald-700 hover:text-emerald-900 underline"
+                            >
+                              {linha.numeroRecibo ? 'Ver recibo' : 'Gerar recibo'}
+                            </button>
                           )}
                         </div>
                       </div>
@@ -6239,7 +6329,10 @@ export default function App() {
                 <p className="text-xs uppercase tracking-widest text-emerald-600 font-semibold mt-1">A Música Transforma Vidas</p>
               </div>
 
-              <h2 className="text-3xl font-serif font-bold text-slate-800 tracking-wide mb-6">Recibo de Pagamento</h2>
+              <h2 className="text-3xl font-serif font-bold text-slate-800 tracking-wide mb-1">Recibo de Pagamento</h2>
+              <p className="text-xs font-semibold text-slate-500 tracking-widest mb-6 h-4">
+                {itemRecibo.numeroRecibo ? `Nº ${String(itemRecibo.numeroRecibo).padStart(6, '0')}` : ''}
+              </p>
 
               <div className="text-left space-y-1.5 text-sm text-slate-700 mb-6">
                 <p>
