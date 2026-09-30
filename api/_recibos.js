@@ -122,11 +122,11 @@ function montarPdfReciboBuffer({ nomePagador, origem, nomePolo, instrumento, tip
   return Buffer.from(pdf.output('arraybuffer'));
 }
 
-// Remetente padrão do Resend — funciona sem verificar domínio nenhum, mas chega com
-// "via resend.dev" pra quem recebe. Assim que vocês verificarem um domínio próprio no
-// painel do Resend, é só trocar essa constante (ex: 'Projeto Acordes de Davi
-// <recibos@acordesdedavi.com.br>') que os e-mails passam a sair com a cara de vocês.
-const REMETENTE_PADRAO = 'Projeto Acordes de Davi <onboarding@resend.dev>';
+// Remetente do Resend usando o domínio próprio (acordesdedavi.com.br), verificado no
+// painel do Resend via registros DNS (DKIM + SPF) cadastrados no Registro.br. Antes de
+// verificar o domínio, isso aqui usava 'onboarding@resend.dev' (remetente compartilhado
+// do Resend, chega com "via resend.dev" pra quem recebe).
+const REMETENTE_PADRAO = 'Projeto Acordes de Davi <recibos@acordesdedavi.com.br>';
 
 async function enviarEmailRecibo({ destinatarioEmail, nomePagador, valor, pdfBuffer, nomeArquivo }) {
   const apiKey = process.env.RESEND_API_KEY;
