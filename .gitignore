@@ -1,0 +1,10 @@
+node_modules
+dist
+.vercel
+.env
+.env.local
+
+# Chave da service account do Firebase (usada pelo script de restauração de backup,
+# scripts/restaurar-backup.js) — dá acesso TOTAL ao Firestore, passando por cima de
+# qualquer regra de segurança. NUNCA pode ir pro GitHub.
+scripts/service-account.json
