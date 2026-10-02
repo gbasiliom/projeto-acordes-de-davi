@@ -840,19 +840,17 @@ export default function App() {
         credencial = await createUserWithEmailAndPassword(auth, dadosAluno.email, dadosAluno.senha);
       } catch (errCriar) {
         if (errCriar.code === 'auth/email-already-in-use') {
-          // Repetir o mesmo e-mail em mais de um cadastro só é permitido pra Banda
-          // (vários integrantes registrados sob o mesmo login/contato) — pra Violão e
-          // Bateria, cada aluno precisa do próprio e-mail, senão a agenda/portal de um
-          // se mistura com a do outro.
-          if (instrumentoSelecionado !== 'banda') {
-            setErroAgendamento('Esse e-mail já está em uso por outro cadastro. Use um e-mail diferente — repetir o mesmo e-mail só é permitido no cadastro de Banda.');
-            setSalvandoAgendamento(false);
-            return;
-          }
+          // Esse e-mail já tem conta — tenta entrar com a senha informada. Cobre dois casos
+          // legítimos: (1) Banda, onde vários integrantes compartilham um e-mail de propósito,
+          // e (2) qualquer aluno que já teve conta antes (ex.: a coordenação apagou um
+          // agendamento antigo dele, mas a conta de login nunca foi apagada) e está se
+          // cadastrando de novo pra uma aula nova — se a senha bater, é a mesma pessoa, deixa
+          // continuar. Só bloqueia de verdade se a senha não confere (sinal real de que o
+          // e-mail é de outra pessoa).
           try {
             credencial = await signInWithEmailAndPassword(auth, dadosAluno.email, dadosAluno.senha);
           } catch (errLogin) {
-            setErroAgendamento('Esse e-mail já tem cadastro, mas a senha não confere. Use a mesma senha do primeiro integrante da banda cadastrado com esse e-mail.');
+            setErroAgendamento('Esse e-mail já tem cadastro, mas a senha não confere. Se você já é aluno(a), use a mesma senha do cadastro anterior. Se não for seu e-mail, use um diferente.');
             setSalvandoAgendamento(false);
             return;
           }
@@ -971,6 +969,9 @@ export default function App() {
       telefone: item.telefone || '',
       local: item.local || '',
       instrumento: item.instrumento || '',
+      dia: item.dia || '',
+      horarioValue: (typeof item.horario === 'object' ? item.horario?.value : item.horario) || '',
+      slotIdOriginal: item.slotId || null,
       novoEmail: '',
       novaSenha: ''
     });
@@ -1003,12 +1004,59 @@ export default function App() {
     setErroEdicaoAluno('');
     setSalvandoEdicaoAluno(true);
     try {
-      await updateDoc(doc(db, 'agendamentos', editandoAluno.id), {
-        nome,
-        telefone: editandoAluno.telefone.trim(),
-        local: editandoAluno.local,
-        instrumento: editandoAluno.instrumento
-      });
+      const dia = editandoAluno.dia || '';
+      const horarioValue = editandoAluno.horarioValue || '';
+      const turmaEscolhida = turmasCadastradas.find(
+        (t) => t.local === editandoAluno.local && t.instrumento === editandoAluno.instrumento && t.dia === dia
+      );
+      const horarioEscolhido = turmaEscolhida?.horarios?.find((h) => h.value === horarioValue);
+      // Só monta um slotId novo quando turma E horário estão escolhidos — se faltar algum
+      // (dado antigo incompleto), não tenta trocar vaga, só salva o resto do cadastro.
+      const novoSlotId = dia && horarioValue
+        ? `vaga-${editandoAluno.local}-${editandoAluno.instrumento}-${dia}-${horarioValue}`
+        : null;
+      const slotIdAntigo = editandoAluno.slotIdOriginal || null;
+      const trocouHorario = novoSlotId && novoSlotId !== slotIdAntigo;
+
+      if (trocouHorario) {
+        // Troca de horário: reserva a vaga nova e só confirma a troca se ela estiver livre —
+        // tudo numa transação, igual ao cadastro público, pra nunca dar dois alunos na mesma
+        // vaga. A vaga antiga só é liberada DEPOIS da troca confirmar certo.
+        await runTransaction(db, async (transaction) => {
+          const novaVagaRef = doc(db, 'vagas', novoSlotId);
+          const novaVagaSnap = await transaction.get(novaVagaRef);
+          if (novaVagaSnap.exists()) {
+            throw new Error('VAGA_OCUPADA');
+          }
+          transaction.set(novaVagaRef, { ocupado: true });
+          transaction.update(doc(db, 'agendamentos', editandoAluno.id), {
+            nome,
+            telefone: editandoAluno.telefone.trim(),
+            local: editandoAluno.local,
+            instrumento: editandoAluno.instrumento,
+            dia,
+            horario: horarioValue,
+            horarioLabel: horarioEscolhido?.label || '',
+            slotId: novoSlotId
+          });
+        });
+        if (slotIdAntigo) {
+          try {
+            await deleteDoc(doc(db, 'vagas', slotIdAntigo));
+          } catch (errVagaAntiga) {
+            console.error('Erro ao liberar a vaga antiga:', errVagaAntiga);
+            setMensagemImportacao('Horário trocado, mas não consegui liberar a vaga antiga automaticamente — confira a regra do Firestore pra "vagas".');
+            setTimeout(() => setMensagemImportacao(''), 10000);
+          }
+        }
+      } else {
+        await updateDoc(doc(db, 'agendamentos', editandoAluno.id), {
+          nome,
+          telefone: editandoAluno.telefone.trim(),
+          local: editandoAluno.local,
+          instrumento: editandoAluno.instrumento
+        });
+      }
 
       if (novoEmail || novaSenha) {
         const idToken = await usuario.getIdToken();
@@ -1026,7 +1074,11 @@ export default function App() {
       setEditandoAluno(null);
     } catch (err) {
       console.error('Erro ao editar cadastro do aluno:', err);
-      setErroEdicaoAluno(err.message || 'Erro ao salvar as alterações do aluno.');
+      if (err.message === 'VAGA_OCUPADA') {
+        setErroEdicaoAluno('Esse horário acabou de ser reservado por outra pessoa (ou já é de outro aluno). Escolha outro.');
+      } else {
+        setErroEdicaoAluno(err.message || 'Erro ao salvar as alterações do aluno.');
+      }
     } finally {
       setSalvandoEdicaoAluno(false);
     }
@@ -3664,7 +3716,55 @@ export default function App() {
                     </select>
                   </div>
                 </div>
-                <p className="text-[11px] text-amber-600 -mt-2">Trocar polo/instrumento aqui não muda o horário já reservado.</p>
+                <p className="text-[11px] text-amber-600 -mt-2">Trocando o polo/instrumento, escolha a turma e o horário novos abaixo.</p>
+
+                {(() => {
+                  const turmasDoPoloInstrumento = turmasCadastradas.filter(
+                    (t) => t.local === editandoAluno.local && t.instrumento === editandoAluno.instrumento
+                  );
+                  const turmaEscolhida = turmasDoPoloInstrumento.find((t) => t.dia === editandoAluno.dia);
+                  const horariosDaTurma = turmaEscolhida?.horarios || [];
+                  return (
+                    <div className="grid grid-cols-1 gap-3 pt-1">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Turma (dia)</label>
+                        <select
+                          value={editandoAluno.dia}
+                          onChange={(e) => setEditandoAluno({ ...editandoAluno, dia: e.target.value, horarioValue: '' })}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                        >
+                          <option value="">Selecione a turma...</option>
+                          {turmasDoPoloInstrumento.map((t) => (
+                            <option key={t.id} value={t.dia}>{t.dia}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Horário</label>
+                        <select
+                          value={editandoAluno.horarioValue}
+                          onChange={(e) => setEditandoAluno({ ...editandoAluno, horarioValue: e.target.value })}
+                          disabled={!editandoAluno.dia}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100"
+                        >
+                          <option value="">Selecione o horário...</option>
+                          {horariosDaTurma.map((h) => {
+                            const idVaga = `vaga-${editandoAluno.local}-${editandoAluno.instrumento}-${editandoAluno.dia}-${h.value}`;
+                            const ocupado = vagasOcupadas.includes(idVaga) && idVaga !== editandoAluno.slotIdOriginal;
+                            return (
+                              <option key={h.value} value={h.value} disabled={ocupado}>
+                                {h.label}{ocupado ? ' (ocupado)' : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                      <p className="text-[11px] text-slate-400 -mt-1">
+                        Trocando a turma/horário, a vaga antiga é liberada e a nova é reservada automaticamente ao salvar.
+                      </p>
+                    </div>
+                  );
+                })()}
 
                 <div className="pt-3 border-t border-slate-200">
                   <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Corrigir login (opcional)</label>
