@@ -268,6 +268,15 @@ const CICLO_VENCIMENTO_DIAS_POR_POLO = {
 };
 const cicloVencimentoDiasDoPolo = (poloId) => CICLO_VENCIMENTO_DIAS_POR_POLO[poloId] || 14;
 
+// Aluno INDIVIDUAL normalmente vence a cada 5 aulas da própria grade (ver
+// calcularVencimentoPorAulas, embaixo). Mas em alguns polos foi combinado cobrar o
+// individual no mesmo ciclo do pacote/igreja desse polo (a cada 14 dias/quinzena,
+// contados da "Data de início das aulas" — igual cicloVencimentoDiasDoPolo acima): São
+// Luiz e Chalé. Mata Fria/Penha do Côco (polo "matafria") continua no padrão de sempre,
+// a cada 5 aulas — por isso não entra nessa lista.
+const POLOS_INDIVIDUAL_CICLO_QUINZENAL = ['saoluiz', 'chale'];
+const individualUsaCicloDoPolo = (poloId) => POLOS_INDIVIDUAL_CICLO_QUINZENAL.includes(poloId);
+
 // Valor por aula, pra quando o aluno paga individualmente (fora do pacote da igreja).
 // São Luís, Chalé e Mata Fria vêm direto do planejamento (tabela confirmada em 15/09).
 const VALOR_AULA_POR_POLO = {
@@ -2963,11 +2972,15 @@ export default function App() {
           // Já pagou o ciclo atual — mostra a PRÓXIMA data de pagamento (o ciclo
           // seguinte), em vez de deixar sem nenhuma data.
           if (polo?.dataInicioAulas) {
-            const calculo = calcularVencimentoPorAulas({ dia: diaDoAgendamento(item) }, polo.dataInicioAulas, 5, true);
+            const calculo = individualUsaCicloDoPolo(item.local)
+              ? calcularVencimentoPeriodico(polo.dataInicioAulas, cicloVencimentoDiasDoPolo(item.local), 0, true)
+              : calcularVencimentoPorAulas({ dia: diaDoAgendamento(item) }, polo.dataInicioAulas, 5, true);
             if (calculo) vencimento = calculo.vencimento;
           }
         } else if (polo?.dataInicioAulas) {
-          const calculo = calcularVencimentoPorAulas({ dia: diaDoAgendamento(item) }, polo.dataInicioAulas, 5);
+          const calculo = individualUsaCicloDoPolo(item.local)
+            ? calcularVencimentoPeriodico(polo.dataInicioAulas, cicloVencimentoDiasDoPolo(item.local), 0, false)
+            : calcularVencimentoPorAulas({ dia: diaDoAgendamento(item) }, polo.dataInicioAulas, 5);
           if (calculo) {
             vencimento = calculo.vencimento;
             status = calculo.passadoAlgum ? 'atrasado' : 'pendente';
@@ -3371,7 +3384,9 @@ export default function App() {
             {(() => {
               const polo = LOCALIZACOES.find(l => l.id === item.local);
               if (!polo?.dataInicioAulas) return 'defina a "Data de início das aulas" desse polo na aba Horários';
-              const calculo = calcularVencimentoPorAulas({ dia: diaDoAgendamento(item) }, polo.dataInicioAulas, 5, !!item.pago);
+              const calculo = individualUsaCicloDoPolo(item.local)
+                ? calcularVencimentoPeriodico(polo.dataInicioAulas, cicloVencimentoDiasDoPolo(item.local), 0, !!item.pago)
+                : calcularVencimentoPorAulas({ dia: diaDoAgendamento(item) }, polo.dataInicioAulas, 5, !!item.pago);
               return calculo?.vencimento ? paraDataLocal(calculo.vencimento).toLocaleDateString('pt-BR') : 'não deu pra calcular ainda';
             })()}
           </span>
@@ -5289,10 +5304,11 @@ export default function App() {
                 <TrendingUp className="w-6 h-6 text-emerald-600" /> Relatório Financeiro
               </h2>
               <p className="text-xs text-slate-500">
-                Vencimento calculado sozinho: a cada 14 dias (quinzena) pro pacote/igreja, a cada 5 aulas pro individual —
-                sem precisar digitar nenhuma data. Antes do vencimento chegar é "Pendente" (pagamento previsto); depois que
-                chega/passa sem ter sido marcado como pago, vira "Atrasado". Quem já está marcado como pago aparece em
-                "Em dia" já mostrando a PRÓXIMA data de pagamento (o ciclo seguinte), do mesmo jeito pra todos os polos.
+                Vencimento calculado sozinho: a cada 14 dias (quinzena) pro pacote/igreja e pro individual de São
+                Luiz/Chalé, a cada 5 aulas pro individual de Mata Fria/Penha do Côco — sem precisar digitar nenhuma data.
+                Antes do vencimento chegar é "Pendente" (pagamento previsto); depois que chega/passa sem ter sido marcado
+                como pago, vira "Atrasado". Quem já está marcado como pago aparece em "Em dia" já mostrando a PRÓXIMA data
+                de pagamento (o ciclo seguinte), do mesmo jeito pra todos os polos.
               </p>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
