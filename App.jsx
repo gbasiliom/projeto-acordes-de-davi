@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil, ClipboardList, TrendingUp } from 'lucide-react';
+import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil, ClipboardList, TrendingUp, Mail, ShieldCheck } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, query, where, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
@@ -485,6 +485,22 @@ export default function App() {
   const [salvandoMaterial, setSalvandoMaterial] = useState(false);
   const [novaAvaliacao, setNovaAvaliacao] = useState({ data: '', texto: '' });
   const [salvandoAvaliacao, setSalvandoAvaliacao] = useState(false);
+  const [avaliacaoEmEdicao, setAvaliacaoEmEdicao] = useState(null); // { id, data, texto } — avaliação sendo editada agora (null = nenhuma)
+
+  // --- Despesas e metas de faturamento (aba Financeiro) — dados sensíveis, só o admin lê/edita ---
+  const [despesasCadastradas, setDespesasCadastradas] = useState([]);
+  const [metasCadastradas, setMetasCadastradas] = useState([]);
+  const [novaDespesa, setNovaDespesa] = useState({ data: '', descricao: '', valor: '', categoria: '', poloId: '' });
+  const [salvandoDespesa, setSalvandoDespesa] = useState(false);
+  const [novaMeta, setNovaMeta] = useState({ poloId: '', mes: '', valorMeta: '' });
+  const [salvandoMeta, setSalvandoMeta] = useState(false);
+
+  // --- Relatórios (aba Relatórios) ---
+  const [abaRelatorio, setAbaRelatorio] = useState('financeiro'); // financeiro | chamada | pagamentos | alunos
+  const [relatorioMesFiltro, setRelatorioMesFiltro] = useState(new Date().toISOString().slice(0, 7)); // 'YYYY-MM' — usado nos relatórios de Financeiro e Chamada
+  const [relatorioPoloFiltro, setRelatorioPoloFiltro] = useState(''); // '' = todos os polos — usado nos 4 relatórios
+  const [gerandoPdfRelatorio, setGerandoPdfRelatorio] = useState(false);
+  const relatorioConteudoRef = useRef(null); // aponta pro cartão do relatório visível agora (só um fica visível por vez)
 
   // --- Cadastro do proprietário/emissor (aba Configurações) — nome, CPF e endereço
   // que passam a aparecer no recibo de pagamento, pra você poder usar o recibo pra
@@ -750,6 +766,33 @@ export default function App() {
       unsubAvaliacoes();
     };
   }, [usuario?.uid, souAdmin, souIgreja, minhaIgreja?.poloId]);
+
+  // Despesas e metas de faturamento — dados sensíveis do caixa do projeto, só fazem
+  // sentido pro admin (nem aluno, nem igreja precisam ou devem ver isso). Por isso ficam
+  // num efeito separado do de agendamentos/presenças/avaliações acima, e só buscam quando
+  // a conta logada é mesmo a do admin — qualquer outra situação (visitante, aluno, igreja,
+  // ou admin que acabou de deslogar) limpa as duas listas.
+  useEffect(() => {
+    if (!souAdmin) {
+      setDespesasCadastradas([]);
+      setMetasCadastradas([]);
+      return;
+    }
+    const unsubDespesas = onSnapshot(collection(db, 'despesas'), (snapshot) => {
+      setDespesasCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.error("Erro ao buscar despesas:", error);
+    });
+    const unsubMetas = onSnapshot(collection(db, 'metas'), (snapshot) => {
+      setMetasCadastradas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.error("Erro ao buscar metas:", error);
+    });
+    return () => {
+      unsubDespesas();
+      unsubMetas();
+    };
+  }, [souAdmin]);
 
   const fazerLogin = async (e) => {
     e.preventDefault();
@@ -1152,6 +1195,93 @@ export default function App() {
     }
   };
 
+  const salvarEdicaoAvaliacao = async (id, dataIso, texto) => {
+    const textoLimpo = (texto || '').trim();
+    if (!textoLimpo) return;
+    setSalvandoAvaliacao(true);
+    try {
+      await updateDoc(doc(db, 'avaliacoes', id), {
+        data: dataIso || new Date().toISOString().slice(0, 10),
+        texto: textoLimpo,
+      });
+      setAvaliacaoEmEdicao(null);
+    } catch (err) {
+      console.error('Erro ao editar avaliação:', err);
+      alert('Erro ao salvar a edição da avaliação. Tente novamente.');
+    } finally {
+      setSalvandoAvaliacao(false);
+    }
+  };
+
+  // --- Despesas e metas de faturamento (aba Financeiro) ---
+  const adicionarDespesa = async (e) => {
+    e.preventDefault();
+    const valorNumerico = Number(String(novaDespesa.valor).replace(',', '.'));
+    if (!novaDespesa.data || !novaDespesa.descricao.trim() || !valorNumerico || valorNumerico <= 0) return;
+    setSalvandoDespesa(true);
+    try {
+      await addDoc(collection(db, 'despesas'), {
+        data: novaDespesa.data,
+        descricao: novaDespesa.descricao.trim(),
+        valor: valorNumerico,
+        categoria: novaDespesa.categoria.trim() || 'Outras',
+        poloId: novaDespesa.poloId || null,
+        criadoEm: new Date().toISOString()
+      });
+      setNovaDespesa({ data: '', descricao: '', valor: '', categoria: '', poloId: '' });
+    } catch (err) {
+      console.error('Erro ao salvar despesa:', err);
+      alert('Erro ao salvar a despesa. Tente novamente.');
+    } finally {
+      setSalvandoDespesa(false);
+    }
+  };
+
+  const removerDespesa = async (id) => {
+    if (!window.confirm('Remover essa despesa?')) return;
+    try {
+      await deleteDoc(doc(db, 'despesas', id));
+    } catch (err) {
+      console.error('Erro ao remover despesa:', err);
+      alert('Erro ao remover a despesa.');
+    }
+  };
+
+  const adicionarOuAtualizarMeta = async (e) => {
+    e.preventDefault();
+    const valorNumerico = Number(String(novaMeta.valorMeta).replace(',', '.'));
+    if (!novaMeta.poloId || !novaMeta.mes || !valorNumerico || valorNumerico <= 0) return;
+    setSalvandoMeta(true);
+    try {
+      // Uma meta só por polo+mês — usa um id previsível (em vez de deixar o Firestore
+      // gerar um id aleatório) pra que cadastrar de novo a meta do mesmo polo/mês
+      // ATUALIZE o valor, em vez de criar uma segunda meta duplicada pro mesmo período.
+      const idMeta = `${novaMeta.poloId}_${novaMeta.mes}`;
+      await setDoc(doc(db, 'metas', idMeta), {
+        poloId: novaMeta.poloId,
+        mes: novaMeta.mes,
+        valorMeta: valorNumerico,
+        atualizadoEm: new Date().toISOString()
+      });
+      setNovaMeta({ poloId: '', mes: '', valorMeta: '' });
+    } catch (err) {
+      console.error('Erro ao salvar meta:', err);
+      alert('Erro ao salvar a meta. Tente novamente.');
+    } finally {
+      setSalvandoMeta(false);
+    }
+  };
+
+  const removerMeta = async (id) => {
+    if (!window.confirm('Remover essa meta?')) return;
+    try {
+      await deleteDoc(doc(db, 'metas', id));
+    } catch (err) {
+      console.error('Erro ao remover meta:', err);
+      alert('Erro ao remover a meta.');
+    }
+  };
+
   // --- Materiais/vídeos de estudo (aba Materiais) ---
   const adicionarMaterial = async (e) => {
     e.preventDefault();
@@ -1431,6 +1561,79 @@ export default function App() {
     } finally {
       setGerandoPdfRecibo(false);
     }
+  };
+
+  // Mesma ideia do baixarPdfRecibo acima (html2canvas "fotografa" o que já está na tela e
+  // encaixa num PDF), mas genérica pra qualquer relatório — e, diferente do recibo (que
+  // sempre cabe numa página só), um relatório pode ser bem mais alto que uma folha A4, então
+  // essa versão CORTA a "foto" em fatias e cria uma página nova pra cada fatia, em vez de
+  // espremer tudo numa página só (o que deixaria a letra ilegível).
+  const baixarPdfElemento = async (elementoRef, nomeArquivo) => {
+    if (!elementoRef.current) return;
+    setGerandoPdfRelatorio(true);
+    try {
+      const elemento = elementoRef.current;
+      const canvas = await html2canvas(elemento, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        x: 0,
+        y: 0,
+        scrollX: 0,
+        scrollY: 0,
+        width: elemento.scrollWidth,
+        height: elemento.scrollHeight,
+        windowWidth: elemento.scrollWidth,
+        windowHeight: elemento.scrollHeight
+      });
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const margemMm = 10;
+      const larguraDisponivelMm = pdf.internal.pageSize.getWidth() - margemMm * 2;
+      const alturaPaginaMm = pdf.internal.pageSize.getHeight() - margemMm * 2;
+      const mmPorPixel = larguraDisponivelMm / canvas.width;
+      const alturaPaginaPx = Math.floor(alturaPaginaMm / mmPorPixel);
+
+      let yPx = 0;
+      let pagina = 0;
+      while (yPx < canvas.height) {
+        const alturaFatiaPx = Math.min(alturaPaginaPx, canvas.height - yPx);
+        const canvasFatia = document.createElement('canvas');
+        canvasFatia.width = canvas.width;
+        canvasFatia.height = alturaFatiaPx;
+        canvasFatia.getContext('2d').drawImage(canvas, 0, yPx, canvas.width, alturaFatiaPx, 0, 0, canvas.width, alturaFatiaPx);
+        if (pagina > 0) pdf.addPage();
+        pdf.addImage(canvasFatia.toDataURL('image/png'), 'PNG', margemMm, margemMm, larguraDisponivelMm, alturaFatiaPx * mmPorPixel);
+        yPx += alturaFatiaPx;
+        pagina += 1;
+      }
+      pdf.save(nomeArquivo);
+    } catch (err) {
+      console.error('Erro ao gerar o PDF do relatório:', err);
+      alert('Não foi possível gerar o PDF agora. Tente de novo.');
+    } finally {
+      setGerandoPdfRelatorio(false);
+    }
+  };
+
+  // Gera um arquivo .csv (abre certinho no Excel/Planilhas Google, com acentuação) a partir
+  // de uma lista de colunas e linhas — usa ";" como separador (padrão do Excel em
+  // português, onde "," já é o separador decimal) e um BOM no início pro Excel reconhecer o
+  // arquivo como UTF-8 e não embaralhar os acentos.
+  const baixarCsv = (nomeArquivo, colunas, linhas) => {
+    const escapar = (valor) => {
+      const texto = String(valor ?? '');
+      return /[",;\n]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
+    };
+    const conteudo = '\uFEFF' + [colunas, ...linhas].map((linha) => linha.map(escapar).join(';')).join('\n');
+    const blob = new Blob([conteudo], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = nomeArquivo;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Aluno e igreja pedindo o recibo NO PRÓPRIO portal: baixa o PDF sozinho, sem
@@ -2922,6 +3125,152 @@ export default function App() {
     };
   }, [agendamentos, igrejasCadastradas, turmasCadastradas]);
 
+  // --- Relatórios (aba Relatórios): reaproveita o que já existe (relatorioFinanceiro,
+  // presenças, agendamentos) em formatos prontos pra tabela + exportação. ---
+
+  // "Pagamentos": a mesma lista de contas (em dia/pendente/atrasado/sem dados) que já existe
+  // na aba Financeiro, só numa lista única (uma linha por conta) com o status junto.
+  const relatorioPagamentosFlat = useMemo(() => {
+    const rotuloStatus = { pago: 'Em dia', pendente: 'Pendente', atrasado: 'Atrasado', semDados: 'Sem dados' };
+    let linhas = [
+      ...relatorioFinanceiro.atrasado.itens.map((l) => ({ ...l, statusRotulo: rotuloStatus.atrasado })),
+      ...relatorioFinanceiro.pendente.itens.map((l) => ({ ...l, statusRotulo: rotuloStatus.pendente })),
+      ...relatorioFinanceiro.pago.itens.map((l) => ({ ...l, statusRotulo: rotuloStatus.pago })),
+      ...relatorioFinanceiro.semDados.itens.map((l) => ({ ...l, statusRotulo: rotuloStatus.semDados })),
+    ];
+    if (relatorioPoloFiltro) {
+      const nomePolo = LOCALIZACOES.find((p) => p.id === relatorioPoloFiltro)?.nome || relatorioPoloFiltro;
+      linhas = linhas.filter((l) => l.local === nomePolo);
+    }
+    return linhas;
+  }, [relatorioFinanceiro, relatorioPoloFiltro]);
+
+  // "Geral de alunos": cada agendamento com os dados básicos de cadastro, filtrado por polo
+  // se um filtro foi escolhido.
+  const relatorioGeralAlunos = useMemo(() => {
+    return agendamentos
+      .filter((item) => !relatorioPoloFiltro || item.local === relatorioPoloFiltro)
+      .map((item) => {
+        const polo = LOCALIZACOES.find((l) => l.id === item.local);
+        return {
+          id: item.id,
+          nome: item.nome || '',
+          telefone: item.telefone || '',
+          polo: polo?.nome || item.local || '',
+          instrumento: item.instrumento || '',
+          dia: diaDoAgendamento(item) || '',
+          horario: item.horarioLabel || (typeof item.horario === 'object' ? item.horario?.label : item.horario) || '',
+          tipoPagamento: (item.tipoPagamento || 'pacote') === 'individual' ? 'Individual' : 'Pacote/Igreja',
+          pago: item.pago ? 'Sim' : 'Não',
+        };
+      })
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [agendamentos, relatorioPoloFiltro]);
+
+  // "Chamada/Frequência": agrupa as presenças já registradas (aba Pauta) por aluno, dentro
+  // do mês escolhido, contando quantas aulas tiveram chamada feita e em quantas o aluno
+  // esteve presente — pra dar o % de frequência.
+  const relatorioChamadaAgregado = useMemo(() => {
+    const presencasNoFiltro = presencasCadastradas.filter((p) => !relatorioMesFiltro || (p.data || '').startsWith(relatorioMesFiltro));
+    const porAgendamento = {};
+    presencasNoFiltro.forEach((p) => {
+      if (!porAgendamento[p.agendamentoId]) porAgendamento[p.agendamentoId] = { total: 0, presentes: 0 };
+      porAgendamento[p.agendamentoId].total += 1;
+      if (p.presente) porAgendamento[p.agendamentoId].presentes += 1;
+    });
+    return Object.entries(porAgendamento)
+      .map(([agendamentoId, dados]) => {
+        const item = agendamentos.find((a) => a.id === agendamentoId);
+        if (!item) return null;
+        if (relatorioPoloFiltro && item.local !== relatorioPoloFiltro) return null;
+        const polo = LOCALIZACOES.find((l) => l.id === item.local);
+        return {
+          nome: item.nome || '',
+          polo: polo?.nome || item.local || '',
+          instrumento: item.instrumento || '',
+          aulasComChamada: dados.total,
+          presencas: dados.presentes,
+          faltas: dados.total - dados.presentes,
+          frequenciaPct: dados.total > 0 ? Math.round((dados.presentes / dados.total) * 100) : 0,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [presencasCadastradas, agendamentos, relatorioMesFiltro, relatorioPoloFiltro]);
+
+  // "Financeiro": receita de verdade recebida no mês escolhido (soma de quem foi marcado
+  // como pago com a data de pagamento dentro desse mês — individual e pacote/igreja,
+  // parcela por parcela quando o pacote está dividido), menos as despesas lançadas nesse
+  // mês, comparado com a meta cadastrada pra esse polo+mês (aba Financeiro > Metas).
+  // Agrupado por polo.
+  const relatorioFinanceiroMensal = useMemo(() => {
+    const mes = relatorioMesFiltro;
+    const porPolo = {};
+    const garantirPolo = (poloId) => {
+      if (!porPolo[poloId]) {
+        const polo = LOCALIZACOES.find((l) => l.id === poloId);
+        porPolo[poloId] = { poloId, poloNome: polo?.nome || poloId, receita: 0, despesas: 0, meta: 0 };
+      }
+      return porPolo[poloId];
+    };
+
+    agendamentos
+      .filter((item) => (item.tipoPagamento || 'pacote') === 'individual')
+      .forEach((item) => {
+        if (item.pago && (item.dataPagamento || '').startsWith(mes)) {
+          garantirPolo(item.local).receita += Number(item.valorCombinado) || 0;
+        }
+      });
+
+    igrejasCadastradas.forEach((igreja) => {
+      const poloId = igreja.poloId;
+      if (!poloId) return;
+      const numParcelas = numParcelasDoPolo(poloId);
+      if (numParcelas <= 1) {
+        if (igreja.pago && (igreja.dataPagamento || '').startsWith(mes)) {
+          garantirPolo(poloId).receita += Number(igreja.valorCombinado) || 0;
+        }
+      } else {
+        for (let n = 1; n <= numParcelas; n++) {
+          const pagaParcela = !!igreja[`parcela${n}Pago`];
+          const dataParcela = igreja[`parcela${n}DataPagamento`] || '';
+          if (pagaParcela && dataParcela.startsWith(mes)) {
+            const valorBruto = igreja[`parcela${n}Valor`];
+            const valor = (valorBruto != null && valorBruto !== '') ? Number(valorBruto) : (Number(igreja.valorCombinado) || 0) / numParcelas;
+            garantirPolo(poloId).receita += valor;
+          }
+        }
+      }
+    });
+
+    let despesasGerais = 0;
+    despesasCadastradas.forEach((d) => {
+      if (!(d.data || '').startsWith(mes)) return;
+      if (d.poloId) {
+        garantirPolo(d.poloId).despesas += Number(d.valor) || 0;
+      } else {
+        despesasGerais += Number(d.valor) || 0;
+      }
+    });
+
+    metasCadastradas.forEach((m) => {
+      if (m.mes !== mes) return;
+      garantirPolo(m.poloId).meta += Number(m.valorMeta) || 0;
+    });
+
+    let linhas = Object.values(porPolo);
+    if (relatorioPoloFiltro) {
+      linhas = linhas.filter((l) => l.poloId === relatorioPoloFiltro);
+    }
+    linhas = linhas.sort((a, b) => a.poloNome.localeCompare(b.poloNome));
+
+    const totalReceita = linhas.reduce((s, l) => s + l.receita, 0);
+    const totalDespesas = linhas.reduce((s, l) => s + l.despesas, 0) + (relatorioPoloFiltro ? 0 : despesasGerais);
+    const totalMeta = linhas.reduce((s, l) => s + l.meta, 0);
+
+    return { linhas, despesasGerais, totalReceita, totalDespesas, totalMeta, totalSaldo: totalReceita - totalDespesas };
+  }, [agendamentos, igrejasCadastradas, despesasCadastradas, metasCadastradas, relatorioMesFiltro, relatorioPoloFiltro]);
+
   // Agendamentos do próprio aluno logado (as regras do Firestore já garantem
   // que "agendamentos" só traz os dele quando não é admin, mas filtramos de novo por clareza)
   const meusAgendamentos = usuario ? agendamentos.filter(item => item.uid === usuario.uid) : [];
@@ -3216,6 +3565,12 @@ export default function App() {
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'configuracoes' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
                 >
                   <Settings className="w-4 h-4" /> Configurações
+                </button>
+                <button
+                  onClick={() => setAbaAtiva('relatorios')}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'relatorios' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                >
+                  <FileText className="w-4 h-4" /> Relatórios
                 </button>
               </>
             )}
@@ -3817,19 +4172,64 @@ export default function App() {
                     return (
                       <div className="mt-3 space-y-2 max-h-40 overflow-y-auto">
                         {avaliacoesDoAluno.map((a) => (
-                          <div key={a.id} className="flex items-start justify-between gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100 text-xs">
-                            <div>
-                              <p className="font-semibold text-emerald-700">{formatarDataCalendario(a.data)}</p>
-                              <p className="text-slate-600 whitespace-pre-wrap">{a.texto}</p>
+                          avaliacaoEmEdicao && avaliacaoEmEdicao.id === a.id ? (
+                            <div key={a.id} className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs space-y-1.5">
+                              <input
+                                type="date"
+                                value={avaliacaoEmEdicao.data}
+                                onChange={(e) => setAvaliacaoEmEdicao({ ...avaliacaoEmEdicao, data: e.target.value })}
+                                className="px-2 py-1 border border-slate-300 rounded text-xs"
+                              />
+                              <textarea
+                                value={avaliacaoEmEdicao.texto}
+                                onChange={(e) => setAvaliacaoEmEdicao({ ...avaliacaoEmEdicao, texto: e.target.value })}
+                                rows={2}
+                                className="w-full px-2 py-1 border border-slate-300 rounded text-xs"
+                              />
+                              <div className="flex gap-2 justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => setAvaliacaoEmEdicao(null)}
+                                  className="text-slate-500 hover:text-slate-700 font-semibold px-2 py-1"
+                                >
+                                  Cancelar
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={salvandoAvaliacao || !avaliacaoEmEdicao.texto.trim()}
+                                  onClick={() => salvarEdicaoAvaliacao(avaliacaoEmEdicao.id, avaliacaoEmEdicao.data, avaliacaoEmEdicao.texto)}
+                                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold px-3 py-1 rounded"
+                                >
+                                  {salvandoAvaliacao ? 'Salvando...' : 'Salvar'}
+                                </button>
+                              </div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => removerAvaliacao(a.id)}
-                              className="text-slate-400 hover:text-red-500 shrink-0 font-bold"
-                            >
-                              ✕
-                            </button>
-                          </div>
+                          ) : (
+                            <div key={a.id} className="flex items-start justify-between gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100 text-xs">
+                              <div>
+                                <p className="font-semibold text-emerald-700">{formatarDataCalendario(a.data)}</p>
+                                <p className="text-slate-600 whitespace-pre-wrap">{a.texto}</p>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setAvaliacaoEmEdicao({ id: a.id, data: a.data, texto: a.texto })}
+                                  className="text-slate-400 hover:text-emerald-600"
+                                  title="Editar avaliação"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removerAvaliacao(a.id)}
+                                  className="text-slate-400 hover:text-red-500 font-bold"
+                                  title="Excluir avaliação"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+                          )
                         ))}
                       </div>
                     );
@@ -4969,6 +5369,172 @@ export default function App() {
                 )}
               </div>
             ))}
+
+            {/* Despesas e metas — parte da "estrutura completa para financeiro" pedida:
+                registro de gastos (pra abater da receita) e meta de faturamento por
+                polo/mês (pra comparar quanto já faturou contra quanto queria faturar). As
+                duas alimentam o relatório financeiro completo da aba "Relatórios". */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700 mb-3 flex items-center gap-2">
+                <DollarSign className="w-4 h-4 text-emerald-600" /> Despesas
+              </h3>
+              <form onSubmit={adicionarDespesa} className="grid grid-cols-1 sm:grid-cols-5 gap-2 mb-4">
+                <input
+                  type="date"
+                  required
+                  value={novaDespesa.data}
+                  onChange={(e) => setNovaDespesa({ ...novaDespesa, data: e.target.value })}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                />
+                <input
+                  type="text"
+                  required
+                  value={novaDespesa.descricao}
+                  onChange={(e) => setNovaDespesa({ ...novaDespesa, descricao: e.target.value })}
+                  placeholder="Descrição (ex: Aluguel da sala)"
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm sm:col-span-2"
+                />
+                <input
+                  type="text"
+                  value={novaDespesa.categoria}
+                  onChange={(e) => setNovaDespesa({ ...novaDespesa, categoria: e.target.value })}
+                  placeholder="Categoria (ex: Aluguel)"
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                />
+                <select
+                  value={novaDespesa.poloId}
+                  onChange={(e) => setNovaDespesa({ ...novaDespesa, poloId: e.target.value })}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                >
+                  <option value="">Geral (todos os polos)</option>
+                  {LOCALIZACOES.map((polo) => (
+                    <option key={polo.id} value={polo.id}>{polo.nome}</option>
+                  ))}
+                </select>
+                <div className="flex gap-2 sm:col-span-5">
+                  <input
+                    type="text"
+                    required
+                    inputMode="decimal"
+                    value={novaDespesa.valor}
+                    onChange={(e) => setNovaDespesa({ ...novaDespesa, valor: e.target.value })}
+                    placeholder="Valor (R$)"
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm w-32"
+                  />
+                  <button
+                    type="submit"
+                    disabled={salvandoDespesa}
+                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-bold transition"
+                  >
+                    {salvandoDespesa ? 'Salvando...' : 'Adicionar despesa'}
+                  </button>
+                </div>
+              </form>
+
+              {despesasCadastradas.length === 0 ? (
+                <p className="text-xs text-slate-400">Nenhuma despesa cadastrada ainda.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                  {despesasCadastradas
+                    .slice()
+                    .sort((a, b) => (a.data < b.data ? 1 : -1))
+                    .map((d) => (
+                      <div key={d.id} className="flex items-center justify-between gap-3 p-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-slate-800 truncate">{d.descricao}</p>
+                          <p className="text-slate-500">
+                            {new Date(`${d.data}T00:00:00`).toLocaleDateString('pt-BR')} · {d.categoria || 'Outras'}
+                            {d.poloId && ` · ${LOCALIZACOES.find((l) => l.id === d.poloId)?.nome || d.poloId}`}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="font-bold text-red-700">R$ {Number(d.valor || 0).toFixed(2)}</span>
+                          <button
+                            type="button"
+                            onClick={() => removerDespesa(d.id)}
+                            className="text-slate-400 hover:text-red-500 font-bold"
+                            title="Excluir despesa"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700 mb-3 flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-emerald-600" /> Metas de Faturamento por Polo/Mês
+              </h3>
+              <form onSubmit={adicionarOuAtualizarMeta} className="grid grid-cols-1 sm:grid-cols-4 gap-2 mb-1">
+                <select
+                  required
+                  value={novaMeta.poloId}
+                  onChange={(e) => setNovaMeta({ ...novaMeta, poloId: e.target.value })}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                >
+                  <option value="">Selecione o polo...</option>
+                  {LOCALIZACOES.map((polo) => (
+                    <option key={polo.id} value={polo.id}>{polo.nome}</option>
+                  ))}
+                </select>
+                <input
+                  type="month"
+                  required
+                  value={novaMeta.mes}
+                  onChange={(e) => setNovaMeta({ ...novaMeta, mes: e.target.value })}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                />
+                <input
+                  type="text"
+                  required
+                  inputMode="decimal"
+                  value={novaMeta.valorMeta}
+                  onChange={(e) => setNovaMeta({ ...novaMeta, valorMeta: e.target.value })}
+                  placeholder="Meta (R$)"
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                />
+                <button
+                  type="submit"
+                  disabled={salvandoMeta}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-bold transition"
+                >
+                  {salvandoMeta ? 'Salvando...' : 'Salvar meta'}
+                </button>
+              </form>
+              <p className="text-[11px] text-slate-400 mb-3">Cadastrar de novo a meta do mesmo polo/mês atualiza o valor (não duplica).</p>
+
+              {metasCadastradas.length === 0 ? (
+                <p className="text-xs text-slate-400">Nenhuma meta cadastrada ainda.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                  {metasCadastradas
+                    .slice()
+                    .sort((a, b) => (a.mes < b.mes ? 1 : -1))
+                    .map((m) => (
+                      <div key={m.id} className="flex items-center justify-between gap-3 p-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-slate-800">{LOCALIZACOES.find((l) => l.id === m.poloId)?.nome || m.poloId}</p>
+                          <p className="text-slate-500">{m.mes}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="font-bold text-emerald-700">R$ {Number(m.valorMeta || 0).toFixed(2)}</span>
+                          <button
+                            type="button"
+                            onClick={() => removerMeta(m.id)}
+                            className="text-slate-400 hover:text-red-500 font-bold"
+                            title="Excluir meta"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -5404,6 +5970,277 @@ export default function App() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {abaAtiva === 'relatorios' && (
+          <div className="space-y-4 max-w-5xl mx-auto">
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-3">
+                <FileText className="w-5 h-5 text-emerald-600" /> Relatórios
+              </h2>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {[
+                  { chave: 'financeiro', label: 'Financeiro' },
+                  { chave: 'chamada', label: 'Chamada/Frequência' },
+                  { chave: 'pagamentos', label: 'Pagamentos' },
+                  { chave: 'alunos', label: 'Geral de Alunos' },
+                ].map((r) => (
+                  <button
+                    key={r.chave}
+                    type="button"
+                    onClick={() => setAbaRelatorio(r.chave)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${abaRelatorio === r.chave ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3 pt-3 border-t border-slate-200">
+                {(abaRelatorio === 'financeiro' || abaRelatorio === 'chamada') && (
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Mês</label>
+                    <input
+                      type="month"
+                      value={relatorioMesFiltro}
+                      onChange={(e) => setRelatorioMesFiltro(e.target.value)}
+                      className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Polo</label>
+                  <select
+                    value={relatorioPoloFiltro}
+                    onChange={(e) => setRelatorioPoloFiltro(e.target.value)}
+                    className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
+                  >
+                    <option value="">Todos os polos</option>
+                    {LOCALIZACOES.map((polo) => (
+                      <option key={polo.id} value={polo.id}>{polo.nome}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex gap-2 ml-auto">
+                  <button
+                    type="button"
+                    disabled={gerandoPdfRelatorio}
+                    onClick={() => baixarPdfElemento(relatorioConteudoRef, `relatorio-${abaRelatorio}-${relatorioMesFiltro}.pdf`)}
+                    className="bg-slate-700 hover:bg-slate-800 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition"
+                  >
+                    <Download className="w-3.5 h-3.5" /> {gerandoPdfRelatorio ? 'Gerando...' : 'Baixar PDF'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (abaRelatorio === 'financeiro') {
+                        baixarCsv(`relatorio-financeiro-${relatorioMesFiltro}.csv`,
+                          ['Polo', 'Receita (R$)', 'Despesas (R$)', 'Saldo (R$)', 'Meta (R$)'],
+                          relatorioFinanceiroMensal.linhas.map((l) => [l.poloNome, l.receita.toFixed(2), l.despesas.toFixed(2), (l.receita - l.despesas).toFixed(2), l.meta.toFixed(2)])
+                        );
+                      } else if (abaRelatorio === 'chamada') {
+                        baixarCsv(`relatorio-chamada-${relatorioMesFiltro}.csv`,
+                          ['Aluno', 'Polo', 'Instrumento', 'Aulas com chamada', 'Presenças', 'Faltas', 'Frequência (%)'],
+                          relatorioChamadaAgregado.map((l) => [l.nome, l.polo, l.instrumento, l.aulasComChamada, l.presencas, l.faltas, l.frequenciaPct])
+                        );
+                      } else if (abaRelatorio === 'pagamentos') {
+                        baixarCsv('relatorio-pagamentos.csv',
+                          ['Nome', 'Tipo', 'Polo', 'Status', 'Valor (R$)', 'Vencimento'],
+                          relatorioPagamentosFlat.map((l) => [l.nome, l.tipo === 'individual' ? 'Individual' : 'Pacote/Igreja', l.local, l.statusRotulo, l.valor.toFixed(2), l.vencimento || ''])
+                        );
+                      } else {
+                        baixarCsv('relatorio-geral-alunos.csv',
+                          ['Nome', 'Telefone', 'Polo', 'Instrumento', 'Dia', 'Horário', 'Tipo de pagamento', 'Pago'],
+                          relatorioGeralAlunos.map((l) => [l.nome, l.telefone, l.polo, l.instrumento, l.dia, l.horario, l.tipoPagamento, l.pago])
+                        );
+                      }
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition"
+                  >
+                    <FileText className="w-3.5 h-3.5" /> Baixar CSV (Excel)
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div ref={relatorioConteudoRef} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              {abaRelatorio === 'financeiro' && (
+                <div>
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700 mb-3">Financeiro — {relatorioMesFiltro}</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                    <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+                      <p className="text-[10px] font-bold text-green-700 uppercase">Receita</p>
+                      <p className="text-base font-bold text-green-800">R$ {relatorioFinanceiroMensal.totalReceita.toFixed(2)}</p>
+                    </div>
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+                      <p className="text-[10px] font-bold text-red-700 uppercase">Despesas</p>
+                      <p className="text-base font-bold text-red-800">R$ {relatorioFinanceiroMensal.totalDespesas.toFixed(2)}</p>
+                    </div>
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
+                      <p className="text-[10px] font-bold text-emerald-700 uppercase">Saldo</p>
+                      <p className="text-base font-bold text-emerald-800">R$ {relatorioFinanceiroMensal.totalSaldo.toFixed(2)}</p>
+                    </div>
+                    <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-center">
+                      <p className="text-[10px] font-bold text-slate-500 uppercase">Meta</p>
+                      <p className="text-base font-bold text-slate-700">R$ {relatorioFinanceiroMensal.totalMeta.toFixed(2)}</p>
+                    </div>
+                  </div>
+                  {relatorioFinanceiroMensal.linhas.length === 0 ? (
+                    <p className="text-xs text-slate-400">Nenhum polo com receita, despesa ou meta nesse mês.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-slate-500 border-b border-slate-200">
+                            <th className="py-2 pr-3">Polo</th>
+                            <th className="py-2 pr-3 text-right">Receita</th>
+                            <th className="py-2 pr-3 text-right">Despesas</th>
+                            <th className="py-2 pr-3 text-right">Saldo</th>
+                            <th className="py-2 pr-3 text-right">Meta</th>
+                            <th className="py-2 pr-3 text-right">% da meta</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {relatorioFinanceiroMensal.linhas.map((l) => (
+                            <tr key={l.poloId}>
+                              <td className="py-2 pr-3 font-semibold text-slate-800">{l.poloNome}</td>
+                              <td className="py-2 pr-3 text-right text-green-700">R$ {l.receita.toFixed(2)}</td>
+                              <td className="py-2 pr-3 text-right text-red-700">R$ {l.despesas.toFixed(2)}</td>
+                              <td className="py-2 pr-3 text-right font-semibold">R$ {(l.receita - l.despesas).toFixed(2)}</td>
+                              <td className="py-2 pr-3 text-right text-slate-500">{l.meta > 0 ? `R$ ${l.meta.toFixed(2)}` : '—'}</td>
+                              <td className="py-2 pr-3 text-right text-slate-500">{l.meta > 0 ? `${Math.round((l.receita / l.meta) * 100)}%` : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {relatorioFinanceiroMensal.despesasGerais > 0 && !relatorioPoloFiltro && (
+                        <p className="text-[11px] text-slate-400 mt-2">+ R$ {relatorioFinanceiroMensal.despesasGerais.toFixed(2)} em despesas gerais (sem polo específico), já somadas no total de despesas.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {abaRelatorio === 'chamada' && (
+                <div>
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700 mb-3">Chamada/Frequência — {relatorioMesFiltro}</h3>
+                  {relatorioChamadaAgregado.length === 0 ? (
+                    <p className="text-xs text-slate-400">Nenhuma chamada registrada nesse mês (aba Pauta).</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-slate-500 border-b border-slate-200">
+                            <th className="py-2 pr-3">Aluno</th>
+                            <th className="py-2 pr-3">Polo</th>
+                            <th className="py-2 pr-3">Instrumento</th>
+                            <th className="py-2 pr-3 text-right">Aulas</th>
+                            <th className="py-2 pr-3 text-right">Presenças</th>
+                            <th className="py-2 pr-3 text-right">Faltas</th>
+                            <th className="py-2 pr-3 text-right">Frequência</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {relatorioChamadaAgregado.map((l, i) => (
+                            <tr key={i}>
+                              <td className="py-2 pr-3 font-semibold text-slate-800">{l.nome}</td>
+                              <td className="py-2 pr-3 text-slate-500">{l.polo}</td>
+                              <td className="py-2 pr-3 text-slate-500 capitalize">{l.instrumento}</td>
+                              <td className="py-2 pr-3 text-right">{l.aulasComChamada}</td>
+                              <td className="py-2 pr-3 text-right text-emerald-700">{l.presencas}</td>
+                              <td className="py-2 pr-3 text-right text-red-600">{l.faltas}</td>
+                              <td className="py-2 pr-3 text-right font-bold">{l.frequenciaPct}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {abaRelatorio === 'pagamentos' && (
+                <div>
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700 mb-3">Pagamentos</h3>
+                  {relatorioPagamentosFlat.length === 0 ? (
+                    <p className="text-xs text-slate-400">Nenhuma conta encontrada.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-slate-500 border-b border-slate-200">
+                            <th className="py-2 pr-3">Nome</th>
+                            <th className="py-2 pr-3">Tipo</th>
+                            <th className="py-2 pr-3">Polo</th>
+                            <th className="py-2 pr-3">Status</th>
+                            <th className="py-2 pr-3 text-right">Valor</th>
+                            <th className="py-2 pr-3 text-right">Vencimento</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {relatorioPagamentosFlat.map((l, i) => (
+                            <tr key={i}>
+                              <td className="py-2 pr-3 font-semibold text-slate-800">{l.nome}</td>
+                              <td className="py-2 pr-3 text-slate-500">{l.tipo === 'individual' ? 'Individual' : 'Pacote/Igreja'}</td>
+                              <td className="py-2 pr-3 text-slate-500">{l.local}</td>
+                              <td className="py-2 pr-3">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${l.status === 'pago' ? 'bg-green-100 text-green-700' : l.status === 'atrasado' ? 'bg-red-100 text-red-700' : l.status === 'pendente' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                                  {l.statusRotulo}
+                                </span>
+                              </td>
+                              <td className="py-2 pr-3 text-right">R$ {l.valor.toFixed(2)}</td>
+                              <td className="py-2 pr-3 text-right text-slate-500">{l.vencimento ? new Date(`${l.vencimento}T00:00:00`).toLocaleDateString('pt-BR') : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {abaRelatorio === 'alunos' && (
+                <div>
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700 mb-3">Geral de Alunos</h3>
+                  {relatorioGeralAlunos.length === 0 ? (
+                    <p className="text-xs text-slate-400">Nenhum aluno encontrado.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-slate-500 border-b border-slate-200">
+                            <th className="py-2 pr-3">Nome</th>
+                            <th className="py-2 pr-3">Polo</th>
+                            <th className="py-2 pr-3">Instrumento</th>
+                            <th className="py-2 pr-3">Dia</th>
+                            <th className="py-2 pr-3">Horário</th>
+                            <th className="py-2 pr-3">Tipo</th>
+                            <th className="py-2 pr-3">Pago</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {relatorioGeralAlunos.map((l) => (
+                            <tr key={l.id}>
+                              <td className="py-2 pr-3 font-semibold text-slate-800">{l.nome}</td>
+                              <td className="py-2 pr-3 text-slate-500">{l.polo}</td>
+                              <td className="py-2 pr-3 text-slate-500 capitalize">{l.instrumento}</td>
+                              <td className="py-2 pr-3 text-slate-500">{l.dia}</td>
+                              <td className="py-2 pr-3 text-slate-500">{l.horario}</td>
+                              <td className="py-2 pr-3 text-slate-500">{l.tipoPagamento}</td>
+                              <td className="py-2 pr-3">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${l.pago === 'Sim' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>{l.pago}</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -6369,60 +7206,84 @@ export default function App() {
         )}
 
         {abaAtiva === 'login' && (
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 max-w-sm mx-auto">
-            <h2 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
-              <LogIn className="w-5 h-5 text-emerald-600" /> Acesso do Administrador
-            </h2>
-            <p className="text-xs text-slate-500 mb-4">Digite seu e-mail e senha do Firebase abaixo para conectar.</p>
-            
-            {erroLogin && (
-              <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{erroLogin}</span>
-              </div>
-            )}
+          <div className="min-h-[65vh] flex items-center justify-center py-10 px-2">
+            <div className="w-full max-w-sm">
+              <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
+                <div className="relative overflow-hidden bg-gradient-to-br from-emerald-700 via-emerald-600 to-emerald-800 px-6 py-8 text-center">
+                  <Guitar className="w-36 h-36 absolute -right-6 -top-6 rotate-12 text-white opacity-10 pointer-events-none" />
+                  <Music className="w-20 h-20 absolute -left-6 bottom-0 -rotate-12 text-white opacity-10 pointer-events-none" />
+                  <img
+                    src="/logo-acordes-de-davi.svg"
+                    alt="Logo Acordes de Davi"
+                    className="w-16 h-16 mx-auto mb-3 relative z-10 drop-shadow"
+                  />
+                  <h2 className="text-white font-serif font-bold text-xl tracking-wide relative z-10">Painel Administrativo</h2>
+                  <p className="text-emerald-100 text-xs mt-1 relative z-10">Projeto Acordes de Davi</p>
+                </div>
 
-            <form onSubmit={fazerLogin} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">E-mail</label>
-                <input 
-                  type="email" 
-                  required
-                  value={emailAdmin}
-                  onChange={(e) => setEmailAdmin(e.target.value)}
-                  placeholder="ex: auladeinstrumentos@..." 
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
+                <div className="p-6">
+                  <div className="flex items-center gap-2 text-slate-500 text-xs mb-5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Acesso restrito — use seu e-mail e senha do Firebase.</span>
+                  </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Senha</label>
-                <input 
-                  type="password" 
-                  required
-                  value={senhaAdmin}
-                  onChange={(e) => setSenhaAdmin(e.target.value)}
-                  placeholder="••••••••" 
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
+                  {erroLogin && (
+                    <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>{erroLogin}</span>
+                    </div>
+                  )}
 
-              <div className="pt-2 flex flex-col gap-2">
-                <button 
-                  type="submit"
-                  className="w-full bg-emerald-600 text-white font-medium py-2 rounded-lg text-sm hover:bg-emerald-700 transition shadow-sm"
-                >
-                  Entrar no Painel
-                </button>
-                <button 
-                  type="button"
-                  onClick={() => setAbaAtiva('painel')}
-                  className="w-full px-3 py-2 border border-slate-300 text-slate-600 font-medium rounded-lg text-sm hover:bg-slate-50 transition text-center"
-                >
-                  Voltar
-                </button>
+                  <form onSubmit={fazerLogin} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">E-mail</label>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          type="email"
+                          required
+                          value={emailAdmin}
+                          onChange={(e) => setEmailAdmin(e.target.value)}
+                          placeholder="ex: auladeinstrumentos@..."
+                          className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Senha</label>
+                      <div className="relative">
+                        <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          type="password"
+                          required
+                          value={senhaAdmin}
+                          onChange={(e) => setSenhaAdmin(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="pt-2 flex flex-col gap-2">
+                      <button
+                        type="submit"
+                        className="w-full bg-gradient-to-r from-emerald-600 to-emerald-700 text-white font-semibold py-2.5 rounded-lg text-sm hover:from-emerald-700 hover:to-emerald-800 transition shadow-md flex items-center justify-center gap-2"
+                      >
+                        <LogIn className="w-4 h-4" /> Entrar no Painel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAbaAtiva('painel')}
+                        className="w-full px-3 py-2 border border-slate-300 text-slate-600 font-medium rounded-lg text-sm hover:bg-slate-50 transition text-center"
+                      >
+                        Voltar
+                      </button>
+                    </div>
+                  </form>
+                </div>
               </div>
-            </form>
+            </div>
           </div>
         )}
       </main>
