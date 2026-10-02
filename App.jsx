@@ -212,6 +212,26 @@ const formatarDataCalendario = (isoTexto) => {
   return `${diasSemanaNomes[data.getDay()]}, ${data.toLocaleDateString('pt-BR')}`;
 };
 
+// --- Falta automática por tempo (aba Pauta / Chamada) ---
+// Quantos minutos de tolerância depois do horário marcado de uma aula antes do sistema
+// considerar que ninguém fez a chamada e marcar Falta sozinho (ver itensFaltaAutomaticaHoje,
+// dentro do componente, mais abaixo no arquivo).
+const MINUTOS_TOLERANCIA_FALTA_AUTOMATICA = 15;
+
+// Já passou o prazo de tolerância pra marcar falta automática? Só vale pra aula de HOJE
+// (dataIso tem que ser igual à data de hoje) — comparando com a hora de verdade do
+// dispositivo. horarioValue é o "HH:MM" do início da aula (ex: "08:00").
+const prazoFaltaAutomaticaPassou = (dataIso, horarioValue) => {
+  const hojeIso = paraISO(new Date());
+  if (dataIso !== hojeIso) return false;
+  const base = paraDataLocal(dataIso);
+  if (!base) return false;
+  const [hh, mm] = String(horarioValue || '').split(':').map(Number);
+  if (Number.isNaN(hh)) return false;
+  base.setHours(hh, Number.isNaN(mm) ? 0 : mm, 0, 0);
+  return new Date() > new Date(base.getTime() + MINUTOS_TOLERANCIA_FALTA_AUTOMATICA * 60000);
+};
+
 const INSTRUMENTOS = [
   { id: 'violao', nome: 'Turma de Violão', Icone: Guitar },
   { id: 'bateria', nome: 'Turma de Bateria', Icone: Music },
@@ -495,6 +515,7 @@ export default function App() {
   const [novaAvaliacao, setNovaAvaliacao] = useState({ data: '', texto: '' });
   const [salvandoAvaliacao, setSalvandoAvaliacao] = useState(false);
   const [avaliacaoEmEdicao, setAvaliacaoEmEdicao] = useState(null); // { id, data, texto } — avaliação sendo editada agora (null = nenhuma)
+  const [faltaEmEdicao, setFaltaEmEdicao] = useState(null); // { agendamentoId, dataIso, justificativa } — caixa de justificativa de falta aberta agora (null = nenhuma)
 
   // --- Despesas e metas de faturamento (aba Financeiro) — dados sensíveis, só o admin lê/edita ---
   const [despesasCadastradas, setDespesasCadastradas] = useState([]);
@@ -1170,6 +1191,51 @@ export default function App() {
   // Acha o registro de presença (se algum) de um aluno numa data específica.
   const presencaNaData = (agendamentoId, dataIso) =>
     presencasCadastradas.find(p => p.agendamentoId === agendamentoId && p.data === dataIso);
+
+  // Marca PRESENÇA de um aluno numa data — zera justificativa e a flag "automático"
+  // (a partir de agora é um Presente confirmado por alguém, não mais uma falta).
+  const marcarPresencaData = async (agendamento, dataIso) => {
+    const idPresenca = `${agendamento.id}_${dataIso}`;
+    try {
+      await setDoc(doc(db, 'presencas', idPresenca), {
+        agendamentoId: agendamento.id,
+        uid: agendamento.uid || null,
+        local: agendamento.local || null,
+        data: dataIso,
+        presente: true,
+        automatico: false,
+        justificativa: '',
+        marcadoEm: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Erro ao marcar presença da data:', err);
+      alert('Erro ao marcar a presença dessa data. Tente novamente.');
+    }
+  };
+
+  // Marca FALTA de um aluno numa data, com justificativa opcional (texto vazio quando
+  // não tiver nenhuma) — usada tanto quando o admin marca a falta manualmente (aba
+  // Pauta, botão "Falta") quanto pela checagem automática por tempo (automatico=true,
+  // sem justificativa, já que nesse caso ninguém informou nada — ver
+  // MINUTOS_TOLERANCIA_FALTA_AUTOMATICA, no topo do arquivo).
+  const marcarFaltaData = async (agendamento, dataIso, justificativaTexto = '', automatico = false) => {
+    const idPresenca = `${agendamento.id}_${dataIso}`;
+    try {
+      await setDoc(doc(db, 'presencas', idPresenca), {
+        agendamentoId: agendamento.id,
+        uid: agendamento.uid || null,
+        local: agendamento.local || null,
+        data: dataIso,
+        presente: false,
+        automatico: !!automatico,
+        justificativa: (justificativaTexto || '').trim(),
+        marcadoEm: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Erro ao marcar falta da data:', err);
+      alert('Erro ao marcar a falta dessa data. Tente novamente.');
+    }
+  };
 
   // --- Avaliações de desempenho (nota livre por data, dentro do cadastro do aluno) ---
   const adicionarAvaliacao = async (agendamento, dataIso, texto) => {
@@ -2232,6 +2298,48 @@ export default function App() {
     }
     return maisProxima;
   };
+
+  // --- Falta automática por tempo (aba Pauta / Chamada) ---
+  // Confere a cada 1 minuto (ver "agoraTick" abaixo) se algum aluno tem aula HOJE e já
+  // passou mais de MINUTOS_TOLERANCIA_FALTA_AUTOMATICA minutos do horário marcado sem
+  // ninguém ter dado a chamada dele (nem Presente, nem Falta) — nesse caso, marca Falta
+  // sozinho (sem justificativa, já que ninguém informou nenhuma). Só olha pra aula de
+  // HOJE, de propósito: não varre o histórico de dias passados, pra não "inventar" falta
+  // de uma aula antiga que nunca teve chamada feita. O admin ainda pode corrigir pra
+  // Presente, ou adicionar uma justificativa à falta, normalmente — isso é só o ponto de
+  // partida automático. Só roda enquanto alguém (admin) estiver com o site aberto.
+  const [agoraTick, setAgoraTick] = useState(Date.now());
+  useEffect(() => {
+    const intervalo = setInterval(() => setAgoraTick(Date.now()), 60000);
+    return () => clearInterval(intervalo);
+  }, []);
+
+  const itensFaltaAutomaticaHoje = useMemo(() => {
+    if (!souAdmin) return [];
+    const hojeIso = paraISO(new Date());
+    const pendentes = [];
+    agendamentos.forEach((item) => {
+      const polo = LOCALIZACOES.find(l => l.id === item.local);
+      if (!polo?.dataInicioAulas) return;
+      const dia = diaDoAgendamento(item);
+      if (!dia) return;
+      const datas = gerarDatasDaTurma({ dia }, polo.dataInicioAulas);
+      if (!datas.includes(hojeIso)) return;
+      const horarioValue = (typeof item.horario === 'object' ? item.horario?.value : item.horario) || '';
+      if (!prazoFaltaAutomaticaPassou(hojeIso, horarioValue)) return;
+      if (presencaNaData(item.id, hojeIso)) return;
+      pendentes.push(item);
+    });
+    return pendentes;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [souAdmin, agendamentos, presencasCadastradas, LOCALIZACOES, agoraTick]);
+
+  useEffect(() => {
+    itensFaltaAutomaticaHoje.forEach((item) => {
+      marcarFaltaData(item, paraISO(new Date()), '', true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itensFaltaAutomaticaHoje]);
 
   // Cria um novo polo (local de ensino) — só o admin consegue (regra do Firestore).
   // O id do documento é um "slug" gerado do nome (ex: "Praia Bonita" -> "praiabonita"),
@@ -4287,7 +4395,9 @@ export default function App() {
               </h2>
               <p className="text-xs text-slate-500">
                 Escolha a data da aula — o calendário é gerado sozinho a partir da data de início das aulas de cada
-                polo (aba Horários) — e marque quem esteve presente, separado por polo e por turma.
+                polo (aba Horários) — e marque quem esteve presente, separado por polo e por turma. Depois de 15
+                minutos do horário da aula de hoje, quem ainda não foi marcado vira "Falta" automaticamente — dá pra
+                corrigir pra Presente ou adicionar uma justificativa à falta a qualquer momento.
               </p>
             </div>
 
@@ -4390,17 +4500,65 @@ export default function App() {
                                         {alunosDaTurma.map((item) => {
                                           const registro = presencaNaData(item.id, dataEscolhida);
                                           const presente = !!registro?.presente;
+                                          const falta = !!registro && !registro.presente;
+                                          const caixaAberta = faltaEmEdicao?.agendamentoId === item.id && faltaEmEdicao?.dataIso === dataEscolhida;
                                           return (
                                             <tr key={item.id} className="hover:bg-slate-50 transition">
                                               <td className="p-2 font-bold text-slate-800">{item.nome}</td>
                                               <td className="p-2 text-center">
-                                                <button
-                                                  onClick={() => alternarPresencaData(item, dataEscolhida, presente)}
-                                                  className={`px-4 py-1.5 rounded-lg text-xs font-bold transition inline-flex items-center gap-1.5 ${presente ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                                                >
-                                                  {presente ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                                                  {presente ? 'PRESENTE' : 'FALTOU / A MARCAR'}
-                                                </button>
+                                                {caixaAberta ? (
+                                                  <div className="flex flex-col items-stretch gap-1.5 max-w-xs mx-auto text-left">
+                                                    <textarea
+                                                      value={faltaEmEdicao.justificativa}
+                                                      onChange={(e) => setFaltaEmEdicao({ ...faltaEmEdicao, justificativa: e.target.value })}
+                                                      placeholder="Justificativa (opcional)"
+                                                      rows={2}
+                                                      className="w-full px-2 py-1 border border-slate-300 rounded text-xs"
+                                                    />
+                                                    <div className="flex gap-2 justify-end">
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => setFaltaEmEdicao(null)}
+                                                        className="text-slate-500 hover:text-slate-700 text-xs font-semibold px-2 py-1"
+                                                      >
+                                                        Cancelar
+                                                      </button>
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => { marcarFaltaData(item, dataEscolhida, faltaEmEdicao.justificativa, false); setFaltaEmEdicao(null); }}
+                                                        className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-1 rounded"
+                                                      >
+                                                        Confirmar falta
+                                                      </button>
+                                                    </div>
+                                                  </div>
+                                                ) : (
+                                                  <div className="flex flex-col items-center gap-1">
+                                                    <div className="inline-flex rounded-lg overflow-hidden border border-slate-200">
+                                                      <button
+                                                        onClick={() => marcarPresencaData(item, dataEscolhida)}
+                                                        className={`px-3 py-1.5 text-xs font-bold transition inline-flex items-center gap-1.5 ${presente ? 'bg-emerald-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                      >
+                                                        <CheckSquare className="w-3.5 h-3.5" /> Presente
+                                                      </button>
+                                                      <button
+                                                        onClick={() => setFaltaEmEdicao({ agendamentoId: item.id, dataIso: dataEscolhida, justificativa: registro?.justificativa || '' })}
+                                                        className={`px-3 py-1.5 text-xs font-bold transition inline-flex items-center gap-1.5 border-l border-slate-200 ${falta ? 'bg-red-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                      >
+                                                        <Square className="w-3.5 h-3.5" /> Falta
+                                                      </button>
+                                                    </div>
+                                                    {!registro && (
+                                                      <span className="text-[10px] text-slate-400">Ainda não marcado</span>
+                                                    )}
+                                                    {falta && registro?.automatico && (
+                                                      <span className="text-[10px] text-amber-600 font-semibold">Marcado automático (15 min sem chamada)</span>
+                                                    )}
+                                                    {falta && registro?.justificativa && (
+                                                      <span className="text-[10px] text-slate-500 italic max-w-[12rem]">"{registro.justificativa}"</span>
+                                                    )}
+                                                  </div>
+                                                )}
                                               </td>
                                             </tr>
                                           );
