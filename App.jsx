@@ -1237,6 +1237,19 @@ export default function App() {
     }
   };
 
+  // Remove a marcação de presença/falta de um aluno numa data — volta pro estado "ainda
+  // não marcado" (sem nenhum registro), pra quando a chamada foi marcada por engano.
+  const removerPresencaData = async (agendamentoId, dataIso) => {
+    if (!window.confirm('Remover essa marcação de chamada? Volta pro estado "ainda não marcado".')) return;
+    const idPresenca = `${agendamentoId}_${dataIso}`;
+    try {
+      await deleteDoc(doc(db, 'presencas', idPresenca));
+    } catch (err) {
+      console.error('Erro ao remover a marcação de chamada:', err);
+      alert('Erro ao remover a marcação. Tente novamente.');
+    }
+  };
+
   // --- Avaliações de desempenho (nota livre por data, dentro do cadastro do aluno) ---
   const adicionarAvaliacao = async (agendamento, dataIso, texto) => {
     const textoLimpo = (texto || '').trim();
@@ -4534,19 +4547,31 @@ export default function App() {
                                                   </div>
                                                 ) : (
                                                   <div className="flex flex-col items-center gap-1">
-                                                    <div className="inline-flex rounded-lg overflow-hidden border border-slate-200">
-                                                      <button
-                                                        onClick={() => marcarPresencaData(item, dataEscolhida)}
-                                                        className={`px-3 py-1.5 text-xs font-bold transition inline-flex items-center gap-1.5 ${presente ? 'bg-emerald-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                                                      >
-                                                        <CheckSquare className="w-3.5 h-3.5" /> Presente
-                                                      </button>
-                                                      <button
-                                                        onClick={() => setFaltaEmEdicao({ agendamentoId: item.id, dataIso: dataEscolhida, justificativa: registro?.justificativa || '' })}
-                                                        className={`px-3 py-1.5 text-xs font-bold transition inline-flex items-center gap-1.5 border-l border-slate-200 ${falta ? 'bg-red-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                                                      >
-                                                        <Square className="w-3.5 h-3.5" /> Falta
-                                                      </button>
+                                                    <div className="flex items-center gap-1.5">
+                                                      <div className="inline-flex rounded-lg overflow-hidden border border-slate-200">
+                                                        <button
+                                                          onClick={() => marcarPresencaData(item, dataEscolhida)}
+                                                          className={`px-3 py-1.5 text-xs font-bold transition inline-flex items-center gap-1.5 ${presente ? 'bg-emerald-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                        >
+                                                          <CheckSquare className="w-3.5 h-3.5" /> Presente
+                                                        </button>
+                                                        <button
+                                                          onClick={() => setFaltaEmEdicao({ agendamentoId: item.id, dataIso: dataEscolhida, justificativa: registro?.justificativa || '' })}
+                                                          className={`px-3 py-1.5 text-xs font-bold transition inline-flex items-center gap-1.5 border-l border-slate-200 ${falta ? 'bg-red-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                        >
+                                                          <Square className="w-3.5 h-3.5" /> Falta
+                                                        </button>
+                                                      </div>
+                                                      {registro && (
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => removerPresencaData(item.id, dataEscolhida)}
+                                                          title="Remover marcação (volta pro estado não marcado)"
+                                                          className="text-slate-400 hover:text-red-500 p-1.5 rounded-lg hover:bg-red-50 transition"
+                                                        >
+                                                          <Trash2 className="w-3.5 h-3.5" />
+                                                        </button>
+                                                      )}
                                                     </div>
                                                     {!registro && (
                                                       <span className="text-[10px] text-slate-400">Ainda não marcado</span>
