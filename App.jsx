@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil, ClipboardList, TrendingUp, Mail, ShieldCheck } from 'lucide-react';
+import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil, ClipboardList, TrendingUp, Mail, ShieldCheck, Star } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, query, where, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
@@ -516,6 +516,13 @@ export default function App() {
   const [salvandoAvaliacao, setSalvandoAvaliacao] = useState(false);
   const [avaliacaoEmEdicao, setAvaliacaoEmEdicao] = useState(null); // { id, data, texto } — avaliação sendo editada agora (null = nenhuma)
   const [faltaEmEdicao, setFaltaEmEdicao] = useState(null); // { agendamentoId, dataIso, justificativa } — caixa de justificativa de falta aberta agora (null = nenhuma)
+
+  // --- Aba Avaliações (escolhe o polo, lista de alunos, janela de avaliação por aluno) ---
+  const [avaliandoAluno, setAvaliandoAluno] = useState(null); // agendamento sendo avaliado agora (null = nenhum — janela fechada)
+  const [poloAvaliacoesFiltro, setPoloAvaliacoesFiltro] = useState('todos');
+  const [anotacoesIA, setAnotacoesIA] = useState(''); // anotação rápida do professor, usada pra gerar a avaliação com IA
+  const [gerandoComIA, setGerandoComIA] = useState(false);
+  const [erroIA, setErroIA] = useState('');
 
   // --- Despesas e metas de faturamento (aba Financeiro) — dados sensíveis, só o admin lê/edita ---
   const [despesasCadastradas, setDespesasCadastradas] = useState([]);
@@ -1052,6 +1059,62 @@ export default function App() {
   const cancelarEdicaoAluno = () => {
     setEditandoAluno(null);
     setErroEdicaoAluno('');
+  };
+
+  // Abre a janela de avaliações de um aluno, a partir da aba Avaliações (lista por
+  // polo) — mostra só a parte de avaliação, sem os campos de nome/telefone/horário que
+  // aparecem no "Editar cadastro".
+  const abrirAvaliacoesDoAluno = (item) => {
+    setNovaAvaliacao({ data: '', texto: '' });
+    setAvaliacaoEmEdicao(null);
+    setAnotacoesIA('');
+    setErroIA('');
+    setAvaliandoAluno(item);
+  };
+  const fecharAvaliacoesDoAluno = () => {
+    setAvaliandoAluno(null);
+    setAvaliacaoEmEdicao(null);
+    setAnotacoesIA('');
+    setErroIA('');
+  };
+
+  // Chama a IA (API da Anthropic, pela função serverless api/avaliacoes/gerar.js) pra
+  // sugerir o texto da avaliação — usando a anotação rápida digitada agora e/ou o
+  // histórico de avaliações anteriores desse aluno (as 3 mais recentes), o que tiver
+  // disponível. Só SUGERE: preenche o campo de texto, mas quem decide se salva (e pode
+  // editar à vontade antes) é você — nada é salvo sozinho.
+  const gerarAvaliacaoComIA = async () => {
+    if (!avaliandoAluno) return;
+    setErroIA('');
+    setGerandoComIA(true);
+    try {
+      const historico = avaliacoesCadastradas
+        .filter((a) => a.agendamentoId === avaliandoAluno.id)
+        .sort((a, b) => (a.data < b.data ? -1 : 1))
+        .slice(-3)
+        .map((a) => ({ data: a.data, texto: a.texto }));
+      const idToken = await usuario.getIdToken();
+      const resposta = await fetch('/api/avaliacoes/gerar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({
+          nomeAluno: avaliandoAluno.nome,
+          instrumento: avaliandoAluno.instrumento,
+          anotacoes: anotacoesIA,
+          historico
+        })
+      });
+      const dados = await resposta.json();
+      if (!resposta.ok) {
+        throw new Error(dados?.erro || 'Não foi possível gerar o texto agora.');
+      }
+      setNovaAvaliacao((atual) => ({ ...atual, data: atual.data || new Date().toISOString().slice(0, 10), texto: dados.texto }));
+    } catch (err) {
+      console.error('Erro ao gerar avaliação com IA:', err);
+      setErroIA(err.message || 'Erro ao gerar o texto com IA. Tente novamente.');
+    } finally {
+      setGerandoComIA(false);
+    }
   };
 
   // Salva nome/telefone/polo/instrumento direto no Firestore (como já era). Se o campo
@@ -3665,6 +3728,12 @@ export default function App() {
                   <CheckSquare className="w-4 h-4" /> Chamada
                 </button>
                 <button
+                  onClick={() => setAbaAtiva('avaliacoes')}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'avaliacoes' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
+                >
+                  <Star className="w-4 h-4" /> Avaliações
+                </button>
+                <button
                   onClick={() => setAbaAtiva('pagamentos')}
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${abaAtiva === 'pagamentos' ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-700'}`}
                 >
@@ -4416,6 +4485,158 @@ export default function App() {
           </div>
         )}
 
+        {avaliandoAluno && (
+          <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+              <div className="p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <Star className="w-5 h-5 text-emerald-600" /> Avaliações — {avaliandoAluno.nome}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={fecharAvaliacoesDoAluno}
+                    className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 space-y-2">
+                  <label className="block text-xs font-semibold text-indigo-700 uppercase">Gerar com IA (opcional)</label>
+                  <textarea
+                    value={anotacoesIA}
+                    onChange={(e) => setAnotacoesIA(e.target.value)}
+                    placeholder="Anote rapidinho o que o aluno fez na aula de hoje (ex: tocou G, C e D, troca ainda lenta)... ou deixe em branco pra IA sugerir uma continuação com base no histórico dele."
+                    rows={2}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={gerandoComIA}
+                    onClick={gerarAvaliacaoComIA}
+                    className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                  >
+                    {gerandoComIA ? 'Gerando...' : '✨ Gerar com IA'}
+                  </button>
+                  <p className="text-[11px] text-indigo-500">O texto sugerido aparece no campo abaixo — revise e ajuste à vontade antes de salvar.</p>
+                  {erroIA && (
+                    <p className="text-[11px] text-red-600">{erroIA}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nova avaliação</label>
+                  <input
+                    type="date"
+                    value={novaAvaliacao.data}
+                    onChange={(e) => setNovaAvaliacao({ ...novaAvaliacao, data: e.target.value })}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm mb-2 focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <textarea
+                    value={novaAvaliacao.texto}
+                    onChange={(e) => setNovaAvaliacao({ ...novaAvaliacao, texto: e.target.value })}
+                    placeholder="Ex: Já toca os acordes G, C e D com troca rápida entre eles..."
+                    rows={3}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={salvandoAvaliacao || !novaAvaliacao.texto.trim()}
+                    onClick={() => adicionarAvaliacao(avaliandoAluno, novaAvaliacao.data, novaAvaliacao.texto)}
+                    className="mt-2 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                  >
+                    {salvandoAvaliacao ? 'Salvando...' : 'Adicionar avaliação'}
+                  </button>
+
+                  {(() => {
+                    const avaliacoesDoAluno = avaliacoesCadastradas
+                      .filter((a) => a.agendamentoId === avaliandoAluno.id)
+                      .sort((a, b) => (a.data < b.data ? 1 : -1));
+                    if (avaliacoesDoAluno.length === 0) return (
+                      <p className="mt-3 text-xs text-slate-400">Nenhuma avaliação ainda.</p>
+                    );
+                    return (
+                      <div className="mt-3 space-y-2 max-h-56 overflow-y-auto">
+                        {avaliacoesDoAluno.map((a) => (
+                          avaliacaoEmEdicao && avaliacaoEmEdicao.id === a.id ? (
+                            <div key={a.id} className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs space-y-1.5">
+                              <input
+                                type="date"
+                                value={avaliacaoEmEdicao.data}
+                                onChange={(e) => setAvaliacaoEmEdicao({ ...avaliacaoEmEdicao, data: e.target.value })}
+                                className="px-2 py-1 border border-slate-300 rounded text-xs"
+                              />
+                              <textarea
+                                value={avaliacaoEmEdicao.texto}
+                                onChange={(e) => setAvaliacaoEmEdicao({ ...avaliacaoEmEdicao, texto: e.target.value })}
+                                rows={2}
+                                className="w-full px-2 py-1 border border-slate-300 rounded text-xs"
+                              />
+                              <div className="flex gap-2 justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => setAvaliacaoEmEdicao(null)}
+                                  className="text-slate-500 hover:text-slate-700 font-semibold px-2 py-1"
+                                >
+                                  Cancelar
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={salvandoAvaliacao || !avaliacaoEmEdicao.texto.trim()}
+                                  onClick={() => salvarEdicaoAvaliacao(avaliacaoEmEdicao.id, avaliacaoEmEdicao.data, avaliacaoEmEdicao.texto)}
+                                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold px-3 py-1 rounded"
+                                >
+                                  {salvandoAvaliacao ? 'Salvando...' : 'Salvar'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div key={a.id} className="flex items-start justify-between gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100 text-xs">
+                              <div>
+                                <p className="font-semibold text-emerald-700">{formatarDataCalendario(a.data)}</p>
+                                <p className="text-slate-600 whitespace-pre-wrap">{a.texto}</p>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setAvaliacaoEmEdicao({ id: a.id, data: a.data, texto: a.texto })}
+                                  className="text-slate-400 hover:text-emerald-600"
+                                  title="Editar avaliação"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removerAvaliacao(a.id)}
+                                  className="text-slate-400 hover:text-red-500 font-bold"
+                                  title="Excluir avaliação"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={fecharAvaliacoesDoAluno}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {abaAtiva === 'pauta' && (
           <div className="space-y-6 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <div>
@@ -4618,6 +4839,80 @@ export default function App() {
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {abaAtiva === 'avaliacoes' && (
+          <div className="space-y-4 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div>
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <Star className="w-6 h-6 text-emerald-600" /> Avaliações de Desempenho
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">Escolha o polo, depois clique no aluno pra ver ou adicionar uma avaliação.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Filtrar por Polo</label>
+              <select
+                value={poloAvaliacoesFiltro}
+                onChange={(e) => setPoloAvaliacoesFiltro(e.target.value)}
+                className="w-full sm:w-72 px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="todos">Todos os Polos</option>
+                {LOCALIZACOES.map(l => (
+                  <option key={l.id} value={l.id}>{l.nome}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase bg-slate-50">
+                    <th className="p-3">Aluno</th>
+                    <th className="p-3">Polo / Instrumento</th>
+                    <th className="p-3">Horário</th>
+                    <th className="p-3 text-right">Avaliações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-sm">
+                  {agendamentos
+                    .filter(item => poloAvaliacoesFiltro === 'todos' || item.local === poloAvaliacoesFiltro)
+                    .sort((a, b) =>
+                      (a.horario || '').localeCompare(b.horario || '') ||
+                      (a.dia || '').localeCompare(b.dia || '') ||
+                      (a.nome || '').localeCompare(b.nome || '')
+                    )
+                    .map((item) => {
+                      const qtdAvaliacoes = avaliacoesCadastradas.filter(a => a.agendamentoId === item.id).length;
+                      return (
+                        <tr key={item.id} className="hover:bg-slate-50 transition">
+                          <td className="p-3">
+                            <div className="font-bold text-slate-800">{item.nome}</div>
+                          </td>
+                          <td className="p-3">
+                            <div className="text-xs font-semibold uppercase text-emerald-700">
+                              {LOCALIZACOES.find(l => l.id === item.local)?.nome}
+                            </div>
+                            <div className="text-xs capitalize text-slate-500">{item.instrumento}</div>
+                          </td>
+                          <td className="p-3 text-xs text-slate-600">
+                            {formatarHorario({ ...item, dia: diaDoAgendamento(item) })}
+                          </td>
+                          <td className="p-3 text-right">
+                            <button
+                              onClick={() => abrirAvaliacoesDoAluno(item)}
+                              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                            >
+                              <Star className="w-3.5 h-3.5" /> Ver avaliações{qtdAvaliacoes > 0 ? ` (${qtdAvaliacoes})` : ''}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
