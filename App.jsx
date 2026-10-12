@@ -3298,7 +3298,15 @@ export default function App() {
           pago: item.pago ? 'Sim' : 'Não',
         };
       })
-      .sort((a, b) => a.nome.localeCompare(b.nome));
+      // Organiza por Polo, depois Dia (turma), depois Horário — e só desempata por nome
+      // se tudo o resto for igual. Filtrando por um polo específico (dropdown acima), a
+      // lista sai ordenada direto por horário, do mais cedo pro mais tarde.
+      .sort((a, b) =>
+        a.polo.localeCompare(b.polo) ||
+        a.dia.localeCompare(b.dia) ||
+        a.horario.localeCompare(b.horario) ||
+        a.nome.localeCompare(b.nome)
+      );
   }, [agendamentos, relatorioPoloFiltro]);
 
   // "Chamada/Frequência": agrupa as presenças já registradas (aba Pauta) por aluno, dentro
