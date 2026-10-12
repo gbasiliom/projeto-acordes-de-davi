@@ -2942,11 +2942,20 @@ export default function App() {
     gerarPdfListaContatos('Todos os Polos', grupos);
   };
 
-  const agendamentosFiltrados = agendamentos.filter(item => {
-    const matchLocal = filtroLocal === 'todos' || item.local === filtroLocal;
-    const matchInst = filtroInstrumento === 'todos' || item.instrumento === filtroInstrumento;
-    return matchLocal && matchInst;
-  });
+  const agendamentosFiltrados = agendamentos
+    .filter(item => {
+      const matchLocal = filtroLocal === 'todos' || item.local === filtroLocal;
+      const matchInst = filtroInstrumento === 'todos' || item.instrumento === filtroInstrumento;
+      return matchLocal && matchInst;
+    })
+    // Ordem de horário "pura": compara só o horário (08:00 de qualquer polo vem antes de
+    // 08:40 de qualquer polo), sem agrupar por polo antes. Só desempata por dia e, por
+    // último, por nome — quando o horário é exatamente igual (ou nenhum dos dois tem).
+    .sort((a, b) =>
+      (a.horario || '').localeCompare(b.horario || '') ||
+      (a.dia || '').localeCompare(b.dia || '') ||
+      (a.nome || '').localeCompare(b.nome || '')
+    );
 
   // Agrupa os alunos por nome + telefone normalizados (sem acento/espaço/maiúscula) e
   // devolve só os grupos com mais de um registro — candidatos a cadastro duplicado.
@@ -3298,13 +3307,12 @@ export default function App() {
           pago: item.pago ? 'Sim' : 'Não',
         };
       })
-      // Organiza por Polo, depois Dia (turma), depois Horário — e só desempata por nome
-      // se tudo o resto for igual. Filtrando por um polo específico (dropdown acima), a
-      // lista sai ordenada direto por horário, do mais cedo pro mais tarde.
+      // Ordem de horário "pura": compara só o horário (08:00 de qualquer polo vem antes
+      // de 08:40 de qualquer polo), sem agrupar por polo antes. Só desempata por dia e,
+      // por último, por nome — quando o horário é exatamente igual.
       .sort((a, b) =>
-        a.polo.localeCompare(b.polo) ||
-        a.dia.localeCompare(b.dia) ||
         a.horario.localeCompare(b.horario) ||
+        a.dia.localeCompare(b.dia) ||
         a.nome.localeCompare(b.nome)
       );
   }, [agendamentos, relatorioPoloFiltro]);
