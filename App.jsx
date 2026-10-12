@@ -4116,63 +4116,29 @@ export default function App() {
         {abaAtiva === 'gerenciar' && (
           <div className="space-y-6 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-slate-100">
-              <div>
-                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                  <Settings className="w-6 h-6 text-emerald-600" /> Painel de Gestão Geral
-                </h2>
-                <p className="text-xs text-slate-500">Gerencie todos os cadastros ou importe sua planilha (CSV).</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={fazerBackup}
-                  title="Baixa um arquivo com tudo que está cadastrado agora — alunos, turmas e polos"
-                  className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
-                >
-                  <Download className="w-4 h-4" /> Baixar Backup
-                </button>
-                <button
-                  onClick={() => setAbaAtiva('novo')}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
-                >
-                  <PlusCircle className="w-4 h-4" /> Adicionar Novo Aluno
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <FileText className="w-8 h-8 text-emerald-700 shrink-0" />
+                <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-600 to-emerald-700 flex items-center justify-center shadow-sm shrink-0">
+                  <Settings className="w-6 h-6 text-white" />
+                </div>
                 <div>
-                  <h3 className="text-sm font-bold text-emerald-900">Restaurar Backup (.json)</h3>
-                  <p className="text-xs text-emerald-700">Usa o arquivo baixado no botão "Baixar Backup" acima — substitui TODOS os alunos, turmas e polos atuais pelos dados daquele arquivo.</p>
+                  <h2 className="text-xl font-bold text-slate-800">Painel de Gestão Geral</h2>
+                  <p className="text-xs text-slate-500">Gerencie todos os alunos cadastrados.</p>
                 </div>
               </div>
-              <label className="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer transition shadow-sm inline-flex items-center gap-2 shrink-0">
-                <Upload className="w-4 h-4" /> Selecionar Backup
-                <input type="file" accept=".json" onChange={handleImportarBackup} className="hidden" />
-              </label>
+              <button
+                onClick={() => setAbaAtiva('novo')}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm shrink-0"
+              >
+                <PlusCircle className="w-4 h-4" /> Adicionar Novo Aluno
+              </button>
             </div>
 
-            <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-3">
               <div className="flex items-center gap-3">
-                <Calendar className="w-8 h-8 text-amber-700 shrink-0" />
+                <Users className="w-6 h-6 text-emerald-600 shrink-0" />
                 <div>
-                  <h3 className="text-sm font-bold text-amber-900">Migrar planilha do formulário — São Luiz (horário fixo)</h3>
-                  <p className="text-xs text-amber-700">Substitui os cadastros atuais do polo São Luiz por horário fixo na grade nova: Violão na sexta, Bateria no sábado, em ordem de inscrição.</p>
-                </div>
-              </div>
-              <label className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer transition shadow-sm inline-flex items-center gap-2 shrink-0">
-                <Upload className="w-4 h-4" /> Selecionar Planilha
-                <input type="file" accept=".csv" onChange={handleMigrarSaoLuiz} className="hidden" />
-              </label>
-            </div>
-
-            <div className="bg-sky-50 border border-sky-200 p-4 rounded-xl space-y-3">
-              <div className="flex items-center gap-3">
-                <Users className="w-8 h-8 text-sky-700 shrink-0" />
-                <div>
-                  <h3 className="text-sm font-bold text-sky-900">Exportar contatos por polo (pra WhatsApp)</h3>
-                  <p className="text-xs text-sky-700">
+                  <h3 className="text-sm font-bold text-slate-800">Exportar contatos por polo (pra WhatsApp)</h3>
+                  <p className="text-xs text-slate-500">
                     Baixa um arquivo .vcf (cartão de contato) por polo. Importe esse arquivo no app de
                     Contatos do seu celular — os alunos aparecem como contatos normais e daí já dá pra
                     selecionar todos de um polo de uma vez pra criar um grupo ou lista de transmissão no WhatsApp.
@@ -4181,25 +4147,25 @@ export default function App() {
                 </div>
               </div>
               {contatosUnicosPorPolo.size === 0 ? (
-                <p className="text-xs text-sky-600 italic">Nenhum aluno com telefone cadastrado ainda.</p>
+                <p className="text-xs text-slate-400 italic">Nenhum aluno com telefone cadastrado ainda.</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {LOCALIZACOES.map(local => {
                     const qtd = contatosUnicosPorPolo.get(local.id)?.size || 0;
                     if (qtd === 0) return null;
                     return (
-                      <div key={local.id} className="inline-flex items-stretch rounded-lg overflow-hidden border border-sky-300 shadow-sm">
+                      <div key={local.id} className="inline-flex items-stretch rounded-lg overflow-hidden border border-slate-300 shadow-sm">
                         <button
                           onClick={() => exportarContatosPolo(local.id)}
                           title={`Baixar contatos (.vcf) — ${local.nome}`}
-                          className="bg-white hover:bg-sky-100 text-sky-800 px-3 py-2 text-xs font-semibold transition inline-flex items-center gap-1.5"
+                          className="bg-white hover:bg-slate-100 text-slate-700 px-3 py-2 text-xs font-semibold transition inline-flex items-center gap-1.5"
                         >
                           <Download className="w-3.5 h-3.5" /> {local.nome} ({qtd})
                         </button>
                         <button
                           onClick={() => exportarContatosPdfPolo(local.id)}
                           title={`Baixar contatos (.pdf) — ${local.nome}`}
-                          className="bg-sky-100 hover:bg-sky-200 text-sky-800 px-2.5 py-2 text-xs font-semibold transition inline-flex items-center gap-1 border-l border-sky-300"
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-2 text-xs font-semibold transition inline-flex items-center gap-1 border-l border-slate-300"
                         >
                           <FileText className="w-3.5 h-3.5" /> PDF
                         </button>
@@ -4209,14 +4175,14 @@ export default function App() {
                   <div className="inline-flex items-stretch rounded-lg overflow-hidden shadow-sm">
                     <button
                       onClick={exportarContatosTodosPolos}
-                      className="bg-sky-700 hover:bg-sky-800 text-white px-3 py-2 text-xs font-semibold transition inline-flex items-center gap-1.5"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 text-xs font-semibold transition inline-flex items-center gap-1.5"
                     >
                       <Download className="w-3.5 h-3.5" /> Todos os polos (um arquivo só)
                     </button>
                     <button
                       onClick={exportarContatosPdfTodosPolos}
                       title="Baixar contatos (.pdf) — todos os polos"
-                      className="bg-sky-900 hover:bg-sky-950 text-white px-2.5 py-2 text-xs font-semibold transition inline-flex items-center gap-1 border-l border-sky-600"
+                      className="bg-emerald-800 hover:bg-emerald-900 text-white px-2.5 py-2 text-xs font-semibold transition inline-flex items-center gap-1 border-l border-emerald-600"
                     >
                       <FileText className="w-3.5 h-3.5" /> PDF
                     </button>
@@ -4224,13 +4190,6 @@ export default function App() {
                 </div>
               )}
             </div>
-
-            {mensagemImportacao && (
-              <div className="bg-emerald-100 border border-emerald-300 text-emerald-900 p-3 rounded-lg text-xs flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-emerald-700 shrink-0" />
-                <span>{mensagemImportacao}</span>
-              </div>
-            )}
 
             {gruposDuplicados.length > 0 && (
               <div className="bg-red-50 border border-red-200 p-4 rounded-xl space-y-3">
@@ -7145,6 +7104,37 @@ export default function App() {
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div className="mb-4 pb-4 border-b border-slate-100">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <Download className="w-6 h-6 text-emerald-600" /> Backup de Dados
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">Baixe uma cópia de segurança de tudo que está cadastrado, ou restaure um backup anterior.</p>
+            </div>
+
+            {mensagemImportacao && (
+              <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-900 p-3 rounded-lg text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span>{mensagemImportacao}</span>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={fazerBackup}
+                title="Baixa um arquivo com tudo que está cadastrado agora — alunos, turmas e polos"
+                className="flex-1 bg-slate-700 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 shadow-sm"
+              >
+                <Download className="w-4 h-4" /> Baixar Backup
+              </button>
+              <label className="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-medium cursor-pointer transition flex items-center justify-center gap-2">
+                <Upload className="w-4 h-4" /> Restaurar Backup (.json)
+                <input type="file" accept=".json" onChange={handleImportarBackup} className="hidden" />
+              </label>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-3">Restaurar substitui TODOS os alunos, turmas e polos atuais pelos dados do arquivo selecionado.</p>
           </div>
           </div>
         )}
