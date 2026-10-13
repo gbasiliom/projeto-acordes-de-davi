@@ -90,7 +90,7 @@ module.exports = async (req, res) => {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: INSTRUCAO_SISTEMA }] },
         contents: [{ role: 'user', parts: [{ text: contexto }] }],
-        generationConfig: { maxOutputTokens: 400 }
+        generationConfig: { maxOutputTokens: 1024, thinkingConfig: { thinkingLevel: 'low' } }
       })
     });
 
