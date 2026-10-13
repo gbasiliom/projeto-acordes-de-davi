@@ -81,23 +81,45 @@ module.exports = async (req, res) => {
     }
 
     const modelo = process.env.GEMINI_MODEL || MODELO_PADRAO;
-    const resposta = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: INSTRUCAO_SISTEMA }] },
-        contents: [{ role: 'user', parts: [{ text: contexto }] }],
-        generationConfig: { maxOutputTokens: 1024, thinkingConfig: { thinkingLevel: 'low' } }
-      })
-    });
+    const corpoRequisicao = {
+      systemInstruction: { parts: [{ text: INSTRUCAO_SISTEMA }] },
+      contents: [{ role: 'user', parts: [{ text: contexto }] }],
+      generationConfig: { maxOutputTokens: 1024, thinkingConfig: { thinkingLevel: 'low' } }
+    };
 
-    const dados = await resposta.json();
-    if (!resposta.ok) {
-      console.error('Erro da API do Gemini:', dados);
-      throw new Error(dados?.error?.message || 'Erro ao gerar o texto com IA.');
+    // O Gemini às vezes devolve erro 503 ("experiencing high demand") quando o servidor
+    // do Google está sobrecarregado — é temporário, então tentamos de novo sozinhos (até
+    // 3 vezes) antes de mostrar erro pro usuário. Qualquer outro tipo de erro (chave
+    // inválida, limite de uso excedido, etc.) não é sobrecarga passageira, então mostra
+    // o erro já na primeira tentativa.
+    const MAX_TENTATIVAS = 3;
+    let dados;
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+      const resposta = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
+        body: JSON.stringify(corpoRequisicao)
+      });
+
+      dados = await resposta.json();
+
+      if (resposta.ok) {
+        break;
+      }
+
+      const sobrecarregado = resposta.status === 503 || dados?.error?.status === 'UNAVAILABLE';
+      if (!sobrecarregado || tentativa === MAX_TENTATIVAS) {
+        console.error('Erro da API do Gemini:', dados);
+        throw new Error(sobrecarregado
+          ? 'O Gemini está com alta demanda no momento, mesmo depois de tentarmos algumas vezes. Espera um minuto e tenta de novo.'
+          : (dados?.error?.message || 'Erro ao gerar o texto com IA.'));
+      }
+
+      console.warn(`Gemini sobrecarregado (tentativa ${tentativa}/${MAX_TENTATIVAS}) — tentando de novo...`);
+      await new Promise((resolve) => setTimeout(resolve, tentativa * 1000));
     }
 
     const texto = (dados?.candidates?.[0]?.content?.parts || []).map(bloco => bloco.text || '').join('').trim();
