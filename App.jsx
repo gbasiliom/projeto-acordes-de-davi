@@ -6955,7 +6955,7 @@ export default function App() {
         )}
 
         {abaAtiva === 'configuracoes' && (
-          <div className="space-y-6 max-w-2xl mx-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start max-w-6xl mx-auto">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <h2 className="text-xl font-bold text-slate-800 mb-1 flex items-center gap-2">
               <Settings className="w-6 h-6 text-emerald-600" /> Configurações — Cadastro do Proprietário
