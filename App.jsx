@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil, ClipboardList, TrendingUp, Mail, ShieldCheck, Star } from 'lucide-react';
+import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil, ClipboardList, TrendingUp, Mail, ShieldCheck, Star, ChevronDown } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, query, where, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
@@ -507,6 +507,7 @@ export default function App() {
   const [erroInstrumento, setErroInstrumento] = useState('');
   const [salvandoInstrumento, setSalvandoInstrumento] = useState(false);
   const [editandoInstrumento, setEditandoInstrumento] = useState(null);
+  const [instrumentosAberto, setInstrumentosAberto] = useState(false);
   const [editandoAluno, setEditandoAluno] = useState(null);
   const [erroEdicaoAluno, setErroEdicaoAluno] = useState('');
   const [salvandoEdicaoAluno, setSalvandoEdicaoAluno] = useState(false);
@@ -6955,12 +6956,12 @@ export default function App() {
         )}
 
         {abaAtiva === 'configuracoes' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start max-w-6xl mx-auto">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h2 className="text-xl font-bold text-slate-800 mb-1 flex items-center gap-2">
-              <Settings className="w-6 h-6 text-emerald-600" /> Configurações — Cadastro do Proprietário
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch max-w-6xl mx-auto">
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 h-full flex flex-col">
+            <h2 className="text-lg font-bold text-slate-800 mb-1 flex items-center gap-2">
+              <Settings className="w-5 h-5 text-emerald-600 shrink-0" /> Configurações — Cadastro do Proprietário
             </h2>
-            <p className="text-xs text-slate-500 mb-6">
+            <p className="text-xs text-slate-500 mb-4">
               Esses dados passam a aparecer no rodapé de todo recibo de pagamento gerado (aba Pagamentos e
               Portal da Igreja), identificando quem está emitindo o recibo — útil pra controle fiscal.
             </p>
@@ -6972,7 +6973,7 @@ export default function App() {
               </div>
             )}
 
-            <form onSubmit={salvarProprietario} className="space-y-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
+            <form onSubmit={salvarProprietario} className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nome completo (ou razão social)</label>
                 <input
@@ -6980,7 +6981,7 @@ export default function App() {
                   value={formProprietario.nome}
                   onChange={(e) => setFormProprietario({ ...formProprietario, nome: e.target.value })}
                   placeholder="Ex: Daniel Basílio"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
                 />
               </div>
               <div>
@@ -6990,7 +6991,7 @@ export default function App() {
                   value={formProprietario.cpf}
                   onChange={(e) => setFormProprietario({ ...formProprietario, cpf: e.target.value })}
                   placeholder="000.000.000-00"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
+                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
                 />
               </div>
               <div>
@@ -7000,120 +7001,134 @@ export default function App() {
                   onChange={(e) => setFormProprietario({ ...formProprietario, endereco: e.target.value })}
                   placeholder="Rua, número, bairro, cidade - UF, CEP"
                   rows={2}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 resize-none"
+                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition resize-none"
                 />
               </div>
               <button
                 type="submit"
                 disabled={salvandoProprietario}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-sm disabled:opacity-60"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm disabled:opacity-60"
               >
                 {salvandoProprietario ? 'Salvando...' : 'Salvar Dados'}
               </button>
             </form>
           </div>
 
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 max-w-2xl mx-auto mt-6">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 pb-4 border-b border-slate-100">
-              <div>
-                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                  <Guitar className="w-6 h-6 text-emerald-600" /> Tipos de Instrumento
-                </h2>
-                <p className="text-xs text-slate-500 mt-1">Adicione, renomeie ou remova os tipos de instrumento disponíveis pra dar aula (ex: Violão, Bateria, Guitarra...).</p>
-              </div>
-              <button
-                onClick={restaurarInstrumentosPadrao}
-                className="text-xs font-semibold text-emerald-700 border border-emerald-200 px-3 py-2 rounded-lg hover:bg-emerald-50 transition shrink-0"
-              >
-                Restaurar tipos padrão
-              </button>
-            </div>
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 h-full flex flex-col">
+            <button
+              type="button"
+              onClick={() => setInstrumentosAberto(!instrumentosAberto)}
+              className="w-full flex items-center justify-between gap-3 text-left"
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <Guitar className="w-5 h-5 text-emerald-600 shrink-0" />
+                <span className="min-w-0">
+                  <span className="text-lg font-bold text-slate-800 block truncate">Tipos de Instrumento</span>
+                  <span className="text-xs text-slate-400 block">{INSTRUMENTOS.length} tipo(s) cadastrado(s)</span>
+                </span>
+              </span>
+              <ChevronDown className={`w-5 h-5 text-slate-400 shrink-0 transition-transform ${instrumentosAberto ? 'rotate-180' : ''}`} />
+            </button>
 
-            {erroInstrumento && (
-              <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{erroInstrumento}</span>
+            {instrumentosAberto && (
+              <div className="mt-4 pt-4 border-t border-slate-100">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                  <p className="text-xs text-slate-500">Adicione, renomeie ou remova os tipos de instrumento disponíveis pra dar aula (ex: Violão, Bateria, Guitarra...).</p>
+                  <button
+                    onClick={restaurarInstrumentosPadrao}
+                    className="text-xs font-semibold text-emerald-700 border border-emerald-200 px-3 py-2 rounded-xl hover:bg-emerald-50 transition shrink-0"
+                  >
+                    Restaurar tipos padrão
+                  </button>
+                </div>
+
+                {erroInstrumento && (
+                  <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{erroInstrumento}</span>
+                  </div>
+                )}
+
+                <form onSubmit={adicionarInstrumento} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end bg-slate-50 p-4 rounded-xl border border-slate-200 mb-4">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nome do Instrumento</label>
+                    <input
+                      type="text"
+                      value={novoInstrumento.nome}
+                      onChange={(e) => setNovoInstrumento({ nome: e.target.value })}
+                      placeholder="Ex: Ukulele"
+                      className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
+                    />
+                  </div>
+                  <div>
+                    <button
+                      type="submit"
+                      disabled={salvandoInstrumento}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition shadow-sm disabled:opacity-60"
+                    >
+                      {salvandoInstrumento ? 'Salvando...' : 'Adicionar'}
+                    </button>
+                  </div>
+                </form>
+
+                <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+                  {INSTRUMENTOS.map((inst) => (
+                    <div key={inst.id} className={editandoInstrumento?.id === inst.id ? 'px-4 py-3 bg-slate-50' : 'px-4 py-3'}>
+                      {editandoInstrumento?.id === inst.id ? (
+                        <form onSubmit={salvarEdicaoInstrumento} className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                          <input
+                            type="text"
+                            value={editandoInstrumento.nome}
+                            onChange={(e) => setEditandoInstrumento({ ...editandoInstrumento, nome: e.target.value })}
+                            className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition sm:col-span-2"
+                          />
+                          <div className="flex gap-2">
+                            <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold transition">Salvar</button>
+                            <button type="button" onClick={cancelarEdicaoInstrumento} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition">Cancelar</button>
+                          </div>
+                        </form>
+                      ) : (
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                              <inst.Icone className="w-4 h-4 text-emerald-600" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-bold text-slate-800 truncate">{nomeInstrumento(inst.id, INSTRUMENTOS)}</p>
+                              <p className="text-xs text-slate-400">
+                                {turmasCadastradas.filter(t => t.instrumento === inst.id).length} turma(s) cadastrada(s)
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => iniciarEdicaoInstrumento(inst)}
+                              title="Editar"
+                              className="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 flex items-center justify-center transition"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => removerInstrumento(inst)}
+                              title="Remover"
+                              className="w-8 h-8 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 flex items-center justify-center transition"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
-
-            <form onSubmit={adicionarInstrumento} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end bg-slate-50 p-4 rounded-lg border border-slate-200 mb-4">
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nome do Instrumento</label>
-                <input
-                  type="text"
-                  value={novoInstrumento.nome}
-                  onChange={(e) => setNovoInstrumento({ nome: e.target.value })}
-                  placeholder="Ex: Ukulele"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-              <div>
-                <button
-                  type="submit"
-                  disabled={salvandoInstrumento}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition shadow-sm disabled:opacity-60"
-                >
-                  {salvandoInstrumento ? 'Salvando...' : 'Adicionar'}
-                </button>
-              </div>
-            </form>
-
-            <div className="rounded-lg border border-slate-200 divide-y divide-slate-100 overflow-hidden">
-              {INSTRUMENTOS.map((inst) => (
-                <div key={inst.id} className={editandoInstrumento?.id === inst.id ? 'px-4 py-3 bg-slate-50' : 'px-4 py-3'}>
-                  {editandoInstrumento?.id === inst.id ? (
-                    <form onSubmit={salvarEdicaoInstrumento} className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                      <input
-                        type="text"
-                        value={editandoInstrumento.nome}
-                        onChange={(e) => setEditandoInstrumento({ ...editandoInstrumento, nome: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 sm:col-span-2"
-                      />
-                      <div className="flex gap-2">
-                        <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-semibold transition">Salvar</button>
-                        <button type="button" onClick={cancelarEdicaoInstrumento} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-xs font-semibold transition">Cancelar</button>
-                      </div>
-                    </form>
-                  ) : (
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
-                          <inst.Icone className="w-4 h-4 text-emerald-600" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-bold text-slate-800 truncate">{nomeInstrumento(inst.id, INSTRUMENTOS)}</p>
-                          <p className="text-xs text-slate-400">
-                            {turmasCadastradas.filter(t => t.instrumento === inst.id).length} turma(s) cadastrada(s)
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          onClick={() => iniciarEdicaoInstrumento(inst)}
-                          title="Editar"
-                          className="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 flex items-center justify-center transition"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => removerInstrumento(inst)}
-                          title="Remover"
-                          className="w-8 h-8 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 flex items-center justify-center transition"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
           </div>
 
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 h-full flex flex-col">
             <div className="mb-4 pb-4 border-b border-slate-100">
-              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                <Download className="w-6 h-6 text-emerald-600" /> Backup de Dados
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Download className="w-5 h-5 text-emerald-600 shrink-0" /> Backup de Dados
               </h2>
               <p className="text-xs text-slate-500 mt-1">Baixe uma cópia de segurança de tudo que está cadastrado, ou restaure um backup anterior.</p>
             </div>
@@ -7129,11 +7144,11 @@ export default function App() {
               <button
                 onClick={fazerBackup}
                 title="Baixa um arquivo com tudo que está cadastrado agora — alunos, turmas e polos"
-                className="flex-1 bg-slate-700 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 shadow-sm"
+                className="flex-1 bg-slate-700 hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center justify-center gap-2 shadow-sm"
               >
                 <Download className="w-4 h-4" /> Baixar Backup
               </button>
-              <label className="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-medium cursor-pointer transition flex items-center justify-center gap-2">
+              <label className="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-xl text-sm font-medium cursor-pointer transition flex items-center justify-center gap-2">
                 <Upload className="w-4 h-4" /> Restaurar Backup (.json)
                 <input type="file" accept=".json" onChange={handleImportarBackup} className="hidden" />
               </label>
