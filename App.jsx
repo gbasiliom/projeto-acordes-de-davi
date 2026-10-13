@@ -7058,9 +7058,9 @@ export default function App() {
               </div>
             </form>
 
-            <div className="space-y-2">
+            <div className="rounded-lg border border-slate-200 divide-y divide-slate-100 overflow-hidden">
               {INSTRUMENTOS.map((inst) => (
-                <div key={inst.id} className="p-3 rounded-lg border border-slate-200 bg-slate-50">
+                <div key={inst.id} className={editandoInstrumento?.id === inst.id ? 'px-4 py-3 bg-slate-50' : 'px-4 py-3'}>
                   {editandoInstrumento?.id === inst.id ? (
                     <form onSubmit={salvarEdicaoInstrumento} className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
                       <input
@@ -7076,27 +7076,31 @@ export default function App() {
                     </form>
                   ) : (
                     <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <inst.Icone className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <div>
-                          <p className="text-sm font-bold text-slate-800">{nomeInstrumento(inst.id, INSTRUMENTOS)}</p>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                          <inst.Icone className="w-4 h-4 text-emerald-600" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-slate-800 truncate">{nomeInstrumento(inst.id, INSTRUMENTOS)}</p>
                           <p className="text-xs text-slate-400">
                             {turmasCadastradas.filter(t => t.instrumento === inst.id).length} turma(s) cadastrada(s)
                           </p>
                         </div>
                       </div>
-                      <div className="flex gap-2 shrink-0">
+                      <div className="flex items-center gap-1 shrink-0">
                         <button
                           onClick={() => iniciarEdicaoInstrumento(inst)}
-                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                          title="Editar"
+                          className="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 flex items-center justify-center transition"
                         >
-                          Editar
+                          <Pencil className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => removerInstrumento(inst)}
-                          className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                          title="Remover"
+                          className="w-8 h-8 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 flex items-center justify-center transition"
                         >
-                          <Trash2 className="w-3.5 h-3.5" /> Remover
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </div>
