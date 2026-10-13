@@ -1,6 +1,6 @@
 // Função serverless da Vercel: POST /api/avaliacoes/gerar
 //
-// Usa IA (API da Anthropic/Claude) pra ajudar a escrever a avaliação de desempenho de
+// Usa IA (API do Google Gemini) pra ajudar a escrever a avaliação de desempenho de
 // um aluno — duas formas, que podem ser combinadas:
 //   1. Você escreve anotações soltas e informais sobre a aula ("anotacoes") e a IA
 //      transforma isso num parágrafo de avaliação bem escrito.
@@ -11,16 +11,20 @@
 // Só o admin pode chamar isso (confere o token do Firebase, igual nos outros endpoints
 // da pasta api/) — protege a chave de API de ser usada por qualquer um.
 //
-// PRECISA da variável de ambiente ANTHROPIC_API_KEY configurada no painel da Vercel.
+// PRECISA da variável de ambiente GEMINI_API_KEY configurada no painel da Vercel.
 // Veja o passo a passo completo em CONFIGURAR-IA-AVALIACOES.md, na raiz do projeto.
+// (Usamos o Gemini (Google) aqui em vez do Claude (Anthropic) porque o Gemini tem camada
+// gratuita de verdade pra esse volume de uso, sem precisar cadastrar cartão de crédito.)
 const { getAuthAdmin } = require('../_firebaseAdmin');
 
 const ADMIN_EMAIL = 'auladeinstrumentosmusicais2026@gmail.com';
 
-// Pode trocar o modelo pela variável de ambiente ANTHROPIC_MODEL, sem precisar mexer no
+// Pode trocar o modelo pela variável de ambiente GEMINI_MODEL, sem precisar mexer no
 // código — útil se esse modelo aqui for descontinuado no futuro. Veja os modelos
-// disponíveis (e os nomes atuais) em: https://docs.anthropic.com/en/docs/about-claude/models
-const MODELO_PADRAO = 'claude-3-5-haiku-latest';
+// disponíveis (e quais têm camada gratuita) em: https://ai.google.dev/gemini-api/docs/pricing
+const MODELO_PADRAO = 'gemini-3.8-flash';
+
+const INSTRUCAO_SISTEMA = 'Você ajuda um professor de música voluntário (violão ou bateria) a escrever avaliações de desempenho curtas pra alunos de um projeto social chamado "Acordes de Davi". Escreva sempre em português do Brasil, em 2 a 4 frases, tom acolhedor mas objetivo e específico (cite acordes, ritmos, técnicas ou músicas sempre que fizer sentido). Nunca invente informação que não foi dada. Devolva SÓ o texto da avaliação — sem saudação, sem título, sem aspas em volta.';
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -48,9 +52,9 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      res.status(500).json({ erro: 'ANTHROPIC_API_KEY não configurada no projeto da Vercel. Veja o passo a passo em CONFIGURAR-IA-AVALIACOES.md antes de usar essa função.' });
+      res.status(500).json({ erro: 'GEMINI_API_KEY não configurada no projeto da Vercel. Veja o passo a passo em CONFIGURAR-IA-AVALIACOES.md antes de usar essa função.' });
       return;
     }
 
@@ -76,30 +80,29 @@ module.exports = async (req, res) => {
       contexto += `\nO professor não escreveu nada sobre a aula de hoje — sugira uma continuação natural do progresso, baseada só no histórico acima.\n`;
     }
 
-    const resposta = await fetch('https://api.anthropic.com/v1/messages', {
+    const modelo = process.env.GEMINI_MODEL || MODELO_PADRAO;
+    const resposta = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
+        'x-goog-api-key': apiKey
       },
       body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL || MODELO_PADRAO,
-        max_tokens: 400,
-        system: 'Você ajuda um professor de música voluntário (violão ou bateria) a escrever avaliações de desempenho curtas pra alunos de um projeto social chamado "Acordes de Davi". Escreva sempre em português do Brasil, em 2 a 4 frases, tom acolhedor mas objetivo e específico (cite acordes, ritmos, técnicas ou músicas sempre que fizer sentido). Nunca invente informação que não foi dada. Devolva SÓ o texto da avaliação — sem saudação, sem título, sem aspas em volta.',
-        messages: [{ role: 'user', content: contexto }]
+        systemInstruction: { parts: [{ text: INSTRUCAO_SISTEMA }] },
+        contents: [{ role: 'user', parts: [{ text: contexto }] }],
+        generationConfig: { maxOutputTokens: 400 }
       })
     });
 
     const dados = await resposta.json();
     if (!resposta.ok) {
-      console.error('Erro da API da Anthropic:', dados);
+      console.error('Erro da API do Gemini:', dados);
       throw new Error(dados?.error?.message || 'Erro ao gerar o texto com IA.');
     }
 
-    const texto = (dados?.content || []).map(bloco => bloco.text || '').join('').trim();
+    const texto = (dados?.candidates?.[0]?.content?.parts || []).map(bloco => bloco.text || '').join('').trim();
     if (!texto) {
-      throw new Error('A IA não devolveu nenhum texto. Tente de novo.');
+      throw new Error('A IA não devolveu nenhum texto (pode ter sido bloqueado por segurança do Gemini). Tente reescrever a anotação e gerar de novo.');
     }
 
     res.status(200).json({ texto });

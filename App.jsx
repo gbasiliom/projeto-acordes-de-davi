@@ -1104,7 +1104,7 @@ export default function App() {
     setErroIA('');
   };
 
-  // Chama a IA (API da Anthropic, pela função serverless api/avaliacoes/gerar.js) pra
+  // Chama a IA (API do Google Gemini, pela função serverless api/avaliacoes/gerar.js) pra
   // sugerir o texto da avaliação — usando a anotação rápida digitada agora e/ou o
   // histórico de avaliações anteriores desse aluno (as 3 mais recentes), o que tiver
   // disponível. Só SUGERE: preenche o campo de texto, mas quem decide se salva (e pode
