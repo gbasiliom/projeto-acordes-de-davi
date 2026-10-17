@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BookOpen, Calendar, Clock, Music, Guitar, User, LogIn, LogOut, CheckCircle, AlertTriangle, Users, MapPin, Trash2, Settings, PlusCircle, Upload, FileText, CheckSquare, Square, DollarSign, Award, Printer, Download, KeyRound, Pencil, ClipboardList, TrendingUp, Mail, ShieldCheck, Star, ChevronDown } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence, sendPasswordResetEmail } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, query, where, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -512,6 +512,12 @@ export default function App() {
   const [erroEdicaoAluno, setErroEdicaoAluno] = useState('');
   const [salvandoEdicaoAluno, setSalvandoEdicaoAluno] = useState(false);
 
+  // --- Adicionar outro horário a um aluno já cadastrado (mesmo login/uid, sem recadastro) ---
+  const [adicionandoHorarioPara, setAdicionandoHorarioPara] = useState(null); // { uid, nome, telefone }
+  const [novoHorarioForm, setNovoHorarioForm] = useState({ local: '', instrumento: '', dia: '', horarioValue: '' });
+  const [erroAdicaoHorario, setErroAdicaoHorario] = useState('');
+  const [salvandoAdicaoHorario, setSalvandoAdicaoHorario] = useState(false);
+
   // --- Cadastro de Igrejas (mantenedoras que pagam o pacote de um polo) ---
   // Área nova, adicionada por cima do que já existia — não muda em nada o
   // funcionamento por aluno (aba Pagamentos / Portal do Aluno continuam iguais).
@@ -645,6 +651,9 @@ export default function App() {
   const [emailIgreja, setEmailIgreja] = useState('');
   const [senhaIgreja, setSenhaIgreja] = useState('');
   const [erroLoginIgreja, setErroLoginIgreja] = useState('');
+
+  // --- "Esqueci minha senha" (compartilhado pelos três logins: admin, aluno, igreja) ---
+  const [mensagemResetSenha, setMensagemResetSenha] = useState('');
 
   const [mensagemSucesso, setMensagemSucesso] = useState('');
   const [mensagemImportacao, setMensagemImportacao] = useState('');
@@ -906,6 +915,34 @@ export default function App() {
       console.error("Erro ao fazer login da igreja:", err);
       setErroLoginIgreja('E-mail ou senha inválidos. O acesso da igreja é criado pela coordenação, na aba Igrejas.');
     }
+  };
+
+  // Envia o e-mail de redefinição de senha nativo do Firebase — serve pros três logins
+  // (admin, aluno, igreja), porque os três usam e-mail real como identificador no Auth.
+  // Por segurança, SEMPRE mostra a mesma mensagem de sucesso, exista ou não aquele e-mail
+  // cadastrado (não dá pra deixar alguém descobrir, só tentando, quem tem conta ou não).
+  // O único erro distinto é "e-mail inválido", que é só um problema de formato.
+  const enviarResetSenha = async (email, setErro) => {
+    const emailLimpo = (email || '').trim();
+    if (!emailLimpo) {
+      setErro('Digite seu e-mail no campo acima e clique em "Esqueci minha senha" de novo.');
+      return;
+    }
+    setErro('');
+    setMensagemResetSenha('');
+    try {
+      await sendPasswordResetEmail(auth, emailLimpo);
+    } catch (err) {
+      console.error('Erro ao enviar e-mail de redefinição de senha:', err);
+      if (err.code === 'auth/invalid-email') {
+        setErro('Esse e-mail não parece válido.');
+        return;
+      }
+      // Qualquer outro erro (ex: auth/user-not-found) cai na mesma mensagem de sucesso —
+      // de propósito, pelo motivo explicado acima.
+    }
+    setMensagemResetSenha('Se esse e-mail estiver cadastrado, enviamos um link pra redefinir a senha. Confira também a caixa de spam.');
+    setTimeout(() => setMensagemResetSenha(''), 10000);
   };
 
   // Agenda uma vaga: cria (ou reaproveita) a conta do aluno no Firebase Auth,
@@ -1243,6 +1280,92 @@ export default function App() {
       }
     } finally {
       setSalvandoEdicaoAluno(false);
+    }
+  };
+
+  // Abre o formulário de "mais um horário" pro aluno do card/linha clicado. Precisa do uid
+  // (conta de login dele no Firebase Auth) já salvo no agendamento original — cadastros
+  // muito antigos, de antes desse campo existir, podem não ter; nesse caso, orienta a
+  // corrigir primeiro pela edição normal.
+  const iniciarAdicaoHorario = (item) => {
+    if (!item.uid) {
+      alert('Esse cadastro ainda não tem uma conta de login vinculada, então não dá pra adicionar outro horário a ele ainda. Abra "Editar" e defina um e-mail/senha pra esse aluno primeiro.');
+      return;
+    }
+    setErroAdicaoHorario('');
+    setNovoHorarioForm({ local: item.local || '', instrumento: item.instrumento || '', dia: '', horarioValue: '' });
+    setAdicionandoHorarioPara({ uid: item.uid, nome: item.nome, telefone: item.telefone || '' });
+  };
+  const cancelarAdicaoHorario = () => {
+    setAdicionandoHorarioPara(null);
+    setErroAdicaoHorario('');
+  };
+
+  // Cria mais um agendamento (horário) pro MESMO aluno que já tem cadastro e login —
+  // reaproveita o uid que ele já tem no Firebase Auth, sem pedir a senha dele e sem criar
+  // conta nova (ao contrário do cadastro público em handleAgendar, que pede e-mail/senha
+  // porque não sabe ainda se a pessoa já tem conta). É a mesma transação de reserva de
+  // vaga usada ali e na troca de horário em salvarEdicaoAluno, só que aqui SEMPRE cria um
+  // agendamento novo — nunca edita um existente — pra o aluno acumular horários, não trocar.
+  const salvarAdicaoHorario = async (e) => {
+    e.preventDefault();
+    const { local, instrumento, dia, horarioValue } = novoHorarioForm;
+    if (!local || !instrumento || !dia || !horarioValue) {
+      setErroAdicaoHorario('Escolha o polo, o instrumento, a turma e o horário.');
+      return;
+    }
+
+    const turma = turmasCadastradas.find(
+      (t) => t.local === local && t.instrumento === instrumento && t.dia === dia
+    );
+    const horarioEscolhido = turma?.horarios?.find((h) => h.value === horarioValue);
+    const novoSlotId = `vaga-${local}-${instrumento}-${dia}-${horarioValue}`;
+
+    setErroAdicaoHorario('');
+    setSalvandoAdicaoHorario(true);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const vagaRef = doc(db, 'vagas', novoSlotId);
+        const vagaSnap = await transaction.get(vagaRef);
+        if (vagaSnap.exists()) {
+          throw new Error('VAGA_OCUPADA');
+        }
+        transaction.set(vagaRef, { ocupado: true });
+
+        const agendamentoRef = doc(collection(db, 'agendamentos'));
+        transaction.set(agendamentoRef, {
+          nome: adicionandoHorarioPara.nome,
+          telefone: adicionandoHorarioPara.telefone || '',
+          local,
+          instrumento,
+          dia,
+          horario: horarioValue,
+          horarioLabel: horarioEscolhido?.label || '',
+          slotId: novoSlotId,
+          uid: adicionandoHorarioPara.uid,
+          presenca: false,
+          // Mesma regra de tipoPagamento do cadastro público — cada horário tem seu
+          // próprio controle de pagamento, independente dos outros horários desse aluno.
+          tipoPagamento: local === 'matafria' ? 'individual' : 'pacote',
+          formaPagamento: 'pix',
+          dataPagamento: '',
+          pago: false,
+          criadoEm: new Date().toISOString()
+        });
+      });
+
+      setAdicionandoHorarioPara(null);
+      setMensagemImportacao('Horário adicionado! O aluno já vê essa aula no Portal dele, com o mesmo login de antes.');
+      setTimeout(() => setMensagemImportacao(''), 6000);
+    } catch (err) {
+      console.error('Erro ao adicionar horário:', err);
+      if (err.message === 'VAGA_OCUPADA') {
+        setErroAdicaoHorario('Esse horário acabou de ser reservado por outra pessoa (ou já é de outro aluno). Escolha outro.');
+      } else {
+        setErroAdicaoHorario('Erro ao adicionar o horário. Tente novamente em instantes.');
+      }
+    } finally {
+      setSalvandoAdicaoHorario(false);
     }
   };
 
@@ -4301,6 +4424,13 @@ export default function App() {
                       <td className="p-3 text-right">
                         <div className="flex justify-end gap-2">
                           <button
+                            onClick={() => iniciarAdicaoHorario(item)}
+                            title="Adicionar outro horário pra esse aluno, com o mesmo login — sem recadastrar"
+                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
+                          >
+                            <PlusCircle className="w-3.5 h-3.5" /> Horário
+                          </button>
+                          <button
                             onClick={() => iniciarEdicaoAluno(item)}
                             className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1"
                           >
@@ -4573,6 +4703,135 @@ export default function App() {
                     type="button"
                     onClick={cancelarEdicaoAluno}
                     disabled={salvandoEdicaoAluno}
+                    className="bg-slate-200 hover:bg-slate-300 disabled:opacity-60 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Janela de "mais um horário" pro aluno já cadastrado — mesma ideia da janela de
+            edição acima (fora da tabela, abre por cima de qualquer aba). Não pede e-mail
+            nem senha: o uid já vem do agendamento que a coordenação clicou, então essa aula
+            nova cai no MESMO login que o aluno já usa. */}
+        {adicionandoHorarioPara && (
+          <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+              <form onSubmit={salvarAdicaoHorario} className="p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <PlusCircle className="w-5 h-5 text-emerald-600" /> Adicionar horário
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={cancelarAdicaoHorario}
+                    className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <p className="text-xs text-slate-500 -mt-2">
+                  Pra <span className="font-semibold text-slate-700">{adicionandoHorarioPara.nome}</span> — esse aluno
+                  continua com o mesmo login de antes; só entra uma aula a mais pra ele.
+                </p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Polo</label>
+                    <select
+                      value={novoHorarioForm.local}
+                      onChange={(e) => setNovoHorarioForm({ ...novoHorarioForm, local: e.target.value, dia: '', horarioValue: '' })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="">Selecione...</option>
+                      {LOCALIZACOES.map((polo) => (
+                        <option key={polo.id} value={polo.id}>{polo.nome}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Instrumento</label>
+                    <select
+                      value={novoHorarioForm.instrumento}
+                      onChange={(e) => setNovoHorarioForm({ ...novoHorarioForm, instrumento: e.target.value, dia: '', horarioValue: '' })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="">Selecione...</option>
+                      {INSTRUMENTOS.map((inst) => (
+                        <option key={inst.id} value={inst.id}>{nomeInstrumento(inst.id)}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {(() => {
+                  const turmasDoPoloInstrumento = turmasCadastradas.filter(
+                    (t) => t.local === novoHorarioForm.local && t.instrumento === novoHorarioForm.instrumento
+                  );
+                  const turmaEscolhida = turmasDoPoloInstrumento.find((t) => t.dia === novoHorarioForm.dia);
+                  const horariosDaTurma = turmaEscolhida?.horarios || [];
+                  return (
+                    <div className="grid grid-cols-1 gap-3 pt-1">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Turma (dia)</label>
+                        <select
+                          value={novoHorarioForm.dia}
+                          onChange={(e) => setNovoHorarioForm({ ...novoHorarioForm, dia: e.target.value, horarioValue: '' })}
+                          disabled={!novoHorarioForm.local || !novoHorarioForm.instrumento}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100"
+                        >
+                          <option value="">Selecione a turma...</option>
+                          {turmasDoPoloInstrumento.map((t) => (
+                            <option key={t.id} value={t.dia}>{t.dia}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Horário</label>
+                        <select
+                          value={novoHorarioForm.horarioValue}
+                          onChange={(e) => setNovoHorarioForm({ ...novoHorarioForm, horarioValue: e.target.value })}
+                          disabled={!novoHorarioForm.dia}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100"
+                        >
+                          <option value="">Selecione o horário...</option>
+                          {horariosDaTurma.map((h) => {
+                            const idVaga = `vaga-${novoHorarioForm.local}-${novoHorarioForm.instrumento}-${novoHorarioForm.dia}-${h.value}`;
+                            const ocupado = vagasOcupadas.includes(idVaga);
+                            return (
+                              <option key={h.value} value={h.value} disabled={ocupado}>
+                                {h.label}{ocupado ? ' (ocupado)' : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {erroAdicaoHorario && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
+                    {erroAdicaoHorario}
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="submit"
+                    disabled={salvandoAdicaoHorario}
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-bold transition"
+                  >
+                    {salvandoAdicaoHorario ? 'Salvando...' : 'Adicionar horário'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelarAdicaoHorario}
+                    disabled={salvandoAdicaoHorario}
                     className="bg-slate-200 hover:bg-slate-300 disabled:opacity-60 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition"
                   >
                     Cancelar
@@ -7355,6 +7614,12 @@ export default function App() {
                 <span>{erroLoginAluno}</span>
               </div>
             )}
+            {mensagemResetSenha && (
+              <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0" />
+                <span>{mensagemResetSenha}</span>
+              </div>
+            )}
 
             <form onSubmit={fazerLoginAluno} className="space-y-4">
               <div>
@@ -7376,6 +7641,13 @@ export default function App() {
                   onChange={(e) => setSenhaAluno(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
                 />
+                <button
+                  type="button"
+                  onClick={() => enviarResetSenha(emailAluno, setErroLoginAluno)}
+                  className="mt-1.5 text-xs text-emerald-700 hover:text-emerald-800 font-medium underline underline-offset-2"
+                >
+                  Esqueci minha senha
+                </button>
               </div>
               <div className="pt-2 flex flex-col gap-2">
                 <button
@@ -7409,6 +7681,12 @@ export default function App() {
                 <span>{erroLoginIgreja}</span>
               </div>
             )}
+            {mensagemResetSenha && (
+              <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0" />
+                <span>{mensagemResetSenha}</span>
+              </div>
+            )}
 
             <form onSubmit={fazerLoginIgreja} className="space-y-4">
               <div>
@@ -7430,6 +7708,13 @@ export default function App() {
                   onChange={(e) => setSenhaIgreja(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500"
                 />
+                <button
+                  type="button"
+                  onClick={() => enviarResetSenha(emailIgreja, setErroLoginIgreja)}
+                  className="mt-1.5 text-xs text-emerald-700 hover:text-emerald-800 font-medium underline underline-offset-2"
+                >
+                  Esqueci minha senha
+                </button>
               </div>
               <div className="pt-2">
                 <button
@@ -7985,6 +8270,12 @@ export default function App() {
                       <span>{erroLogin}</span>
                     </div>
                   )}
+                  {mensagemResetSenha && (
+                    <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-700 p-3 rounded-lg text-xs flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 shrink-0" />
+                      <span>{mensagemResetSenha}</span>
+                    </div>
+                  )}
 
                   <form onSubmit={fazerLogin} className="space-y-4">
                     <div>
@@ -8015,6 +8306,13 @@ export default function App() {
                           className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
                         />
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => enviarResetSenha(emailAdmin, setErroLogin)}
+                        className="mt-1.5 text-xs text-emerald-700 hover:text-emerald-800 font-medium underline underline-offset-2"
+                      >
+                        Esqueci minha senha
+                      </button>
                     </div>
 
                     <div className="pt-2 flex flex-col gap-2">
