@@ -13,6 +13,11 @@ const { getDb, getAuthAdmin } = require('../_firebaseAdmin');
 
 const ADMIN_EMAIL = 'auladeinstrumentosmusicais2026@gmail.com';
 
+const normalizar = (texto) => (texto || '')
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '');
+
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).json({ erro: 'Método não permitido.' });
@@ -70,6 +75,24 @@ module.exports = async (req, res) => {
       return;
     }
 
+    // Login compartilhado (e-mail aprovado pra mais de um aluno): trocar e-mail/senha aqui
+    // troca pra TODOS os alunos desse login. Só segue com a confirmação do admin.
+    if (req.body.confirmarCompartilhado !== true) {
+      const doLogin = await db.collection('agendamentos').where('uid', '==', agendamento.uid).get();
+      const outros = [...new Set(doLogin.docs
+        .map(d => d.data())
+        .filter(d => normalizar(d.nome) !== normalizar(agendamento.nome))
+        .map(d => (d.nome || '').trim()))];
+      if (outros.length) {
+        res.status(409).json({
+          codigo: 'CONTA_COMPARTILHADA',
+          outros,
+          erro: `Esse login também é usado por: ${outros.join(', ')}. Mudar o e-mail/senha muda pra todos.`
+        });
+        return;
+      }
+    }
+
     if (emailLimpo) {
       if (emailLimpo === ADMIN_EMAIL) {
         res.status(409).json({ erro: 'Esse e-mail é o e-mail da coordenação (admin) — use outro e-mail pra esse aluno.' });
@@ -79,7 +102,7 @@ module.exports = async (req, res) => {
       try {
         const existente = await authAdmin.getUserByEmail(emailLimpo);
         if (existente.uid !== agendamento.uid) {
-          res.status(409).json({ erro: 'Esse e-mail já está em uso por outra conta. Use um e-mail diferente.' });
+          res.status(409).json({ erro: 'Esse e-mail já é de outra conta. Pra usar o MESMO e-mail em 2 alunos, vá em Gestão > "Acesso ao Portal do Aluno" > Correção manual, marque as aulas e escolha esse e-mail.' });
           return;
         }
       } catch (errBusca) {

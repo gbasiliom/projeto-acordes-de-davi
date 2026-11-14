@@ -518,6 +518,18 @@ export default function App() {
   const [erroAdicaoHorario, setErroAdicaoHorario] = useState('');
   const [salvandoAdicaoHorario, setSalvandoAdicaoHorario] = useState(false);
 
+  // --- Acesso ao Portal do Aluno: juntar no MESMO login todas as aulas de um aluno ---
+  const [painelAcessoAberto, setPainelAcessoAberto] = useState(false);
+  const [contasLogin, setContasLogin] = useState({}); // uid -> { email, ultimoLogin }
+  const [escolhaAcesso, setEscolhaAcesso] = useState({}); // chave -> { modo: 'conta'|'nova', uid, email, senha }
+  const [corrigindoAcesso, setCorrigindoAcesso] = useState(null); // chave em andamento
+  const [mensagemAcesso, setMensagemAcesso] = useState(null); // { tipo: 'ok'|'erro', texto }
+  const [buscaAcessoManual, setBuscaAcessoManual] = useState('');
+  const [selecaoAcessoManual, setSelecaoAcessoManual] = useState([]); // agendamentoIds
+  const [mostrarSemLogin, setMostrarSemLogin] = useState(false);
+  const [mostrarCompartilhadosAprovados, setMostrarCompartilhadosAprovados] = useState(false);
+  const uidsConsultadosRef = useRef(new Set());
+
   // --- Cadastro de Igrejas (mantenedoras que pagam o pacote de um polo) ---
   // Área nova, adicionada por cima do que já existia — não muda em nada o
   // funcionamento por aluno (aba Pagamentos / Portal do Aluno continuam iguais).
@@ -1259,12 +1271,19 @@ export default function App() {
 
       if (novoEmail || novaSenha) {
         const idToken = await usuario.getIdToken();
-        const resposta = await fetch('/api/alunos/editar-acesso', {
+        const enviarAcesso = (confirmarCompartilhado) => fetch('/api/alunos/editar-acesso', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-          body: JSON.stringify({ agendamentoId: editandoAluno.id, novoEmail, novaSenha })
+          body: JSON.stringify({ agendamentoId: editandoAluno.id, novoEmail, novaSenha, confirmarCompartilhado })
         });
-        const dados = await resposta.json();
+        let resposta = await enviarAcesso(false);
+        let dados = await resposta.json().catch(() => ({}));
+        if (resposta.status === 409 && dados?.codigo === 'CONTA_COMPARTILHADA') {
+          const seguir = window.confirm(`${dados.erro}\n\nOK = mudar pra todos.\nCancelar = não mexer no login (pra separar esse aluno, use Gestão > "Acesso ao Portal do Aluno" > "Tirar deste e-mail").`);
+          if (!seguir) throw new Error('Cadastro salvo. O e-mail/senha não foi alterado (login compartilhado).');
+          resposta = await enviarAcesso(true);
+          dados = await resposta.json().catch(() => ({}));
+        }
         if (!resposta.ok) {
           throw new Error(dados?.erro || 'Cadastro salvo, mas não consegui atualizar o e-mail/senha agora.');
         }
@@ -1289,7 +1308,7 @@ export default function App() {
   // corrigir primeiro pela edição normal.
   const iniciarAdicaoHorario = (item) => {
     if (!item.uid) {
-      alert('Esse cadastro ainda não tem uma conta de login vinculada, então não dá pra adicionar outro horário a ele ainda. Abra "Editar" e defina um e-mail/senha pra esse aluno primeiro.');
+      alert('Esse cadastro ainda não tem uma conta de login vinculada, então não dá pra adicionar outro horário a ele ainda. Libere o acesso dele primeiro em Gestão > "Acesso ao Portal do Aluno" (defina um e-mail e senha).');
       return;
     }
     setErroAdicaoHorario('');
@@ -2237,7 +2256,21 @@ export default function App() {
           }
         }
 
+        // Mantém o login (uid) de quem já tinha conta: sem isso a aula recriada some do
+        // Portal do Aluno, porque o portal busca as aulas pelo uid. Busca pelo nome no
+        // polo inteiro (e, se não achar, em qualquer polo) e só usa quando há UMA conta.
+        const uidPorNome = (nome) => {
+          const chave = normalizarTexto(nome);
+          const achar = (lista) => [...new Set(lista.filter(a => a.uid && normalizarTexto(a.nome) === chave).map(a => a.uid))];
+          const doPolo = achar(antigosSaoLuiz);
+          if (doPolo.length === 1) return doPolo[0];
+          const geral = achar(agendamentos);
+          return geral.length === 1 ? geral[0] : null;
+        };
+
         for (const registro of [...prontosViolao, ...prontosBateria]) {
+          const uidExistente = uidPorNome(registro.nome);
+          if (uidExistente) registro.uid = uidExistente;
           await addDoc(collection(db, 'agendamentos'), registro);
           await setDoc(doc(db, 'vagas', registro.slotId), { ocupado: true });
         }
@@ -3318,6 +3351,364 @@ export default function App() {
     }
   };
 
+  // ---------------------------------------------------------------------------------
+  // Acesso ao Portal do Aluno
+  // O portal mostra só as aulas cujo campo "uid" é o login do aluno. Se uma aula do mesmo
+  // aluno ficou SEM uid (migração/importação) ou com o uid de OUTRA conta (cadastrou 2x
+  // com e-mails diferentes), ela some do portal. Aqui o admin acha e corrige isso.
+  //
+  // "Mesmo aluno" = mesmo nome (sem acento/espaço/maiúscula) + últimos 8 dígitos do
+  // telefone (assim "(98) 98888-7777" e "5598988887777" batem). Aulas sem telefone entram
+  // no grupo do mesmo nome quando só existe um telefone pra esse nome — mas aí o caso não
+  // é "claro" e precisa da sua confirmação (não entra no "corrigir todos").
+  // ---------------------------------------------------------------------------------
+  const gruposAcessoPortal = useMemo(() => {
+    const vazio = { divergentes: [], semLogin: [], compartilhadosPendentes: [], compartilhadosAprovados: [] };
+    if (!souAdmin) return vazio;
+    const ultimos8 = (tel) => (tel || '').replace(/\D/g, '').slice(-8);
+    const porNome = new Map();
+    agendamentos.forEach(item => {
+      const nome = normalizarTexto(item.nome);
+      if (!nome) return;
+      if (!porNome.has(nome)) porNome.set(nome, []);
+      porNome.get(nome).push(item);
+    });
+
+    const grupos = [];
+    porNome.forEach((lista, nome) => {
+      const porTelefone = new Map();
+      const semTelefone = [];
+      lista.forEach(item => {
+        const tel = ultimos8(item.telefone);
+        if (!tel) { semTelefone.push(item); return; }
+        if (!porTelefone.has(tel)) porTelefone.set(tel, []);
+        porTelefone.get(tel).push(item);
+      });
+      if (porTelefone.size <= 1) {
+        const [tel, itens] = porTelefone.size === 1 ? Array.from(porTelefone.entries())[0] : ['', []];
+        grupos.push({ chave: `${nome}|${tel}`, itens: [...itens, ...semTelefone], claro: semTelefone.length === 0 });
+      } else {
+        porTelefone.forEach((itens, tel) => grupos.push({ chave: `${nome}|${tel}`, itens, claro: true }));
+        if (semTelefone.length) grupos.push({ chave: `${nome}|sem-telefone`, itens: semTelefone, claro: false });
+      }
+    });
+
+    const divergentes = [];
+    const semLogin = [];
+    grupos.forEach(g => {
+      const uids = [...new Set(g.itens.map(i => i.uid).filter(Boolean))];
+      const semUid = g.itens.filter(i => !i.uid).length;
+      if (uids.length === 0) semLogin.push({ ...g, uids });
+      else if (uids.length > 1 || semUid > 0) divergentes.push({ ...g, uids, semUid, obvio: g.claro && uids.length === 1 });
+    });
+    const porNomeAluno = (a, b) => (a.itens[0].nome || '').localeCompare(b.itens[0].nome || '');
+    divergentes.sort(porNomeAluno);
+    semLogin.sort(porNomeAluno);
+
+    // E-mail compartilhado: o MESMO login com alunos de nomes diferentes (irmãos, pai com
+    // filhos, banda). Entra na hora, mas fica aqui até o admin aprovar — e volta a aparecer
+    // se um aluno novo entrar nesse login depois (igual ao "Não é duplicado").
+    const porUid = new Map();
+    agendamentos.forEach(item => {
+      if (!item.uid) return;
+      if (!porUid.has(item.uid)) porUid.set(item.uid, []);
+      porUid.get(item.uid).push(item);
+    });
+    const compartilhados = [];
+    porUid.forEach((itens, uid) => {
+      const alunos = new Map();
+      itens.forEach(item => {
+        const chave = normalizarTexto(item.nome) || 'sem-nome';
+        if (!alunos.has(chave)) alunos.set(chave, []);
+        alunos.get(chave).push(item);
+      });
+      if (alunos.size > 1) {
+        compartilhados.push({
+          uid,
+          itens,
+          alunos: Array.from(alunos.values()),
+          pendente: !itens.every(i => i.compartilhamentoAprovado === true)
+        });
+      }
+    });
+    compartilhados.sort((a, b) => (a.itens[0].nome || '').localeCompare(b.itens[0].nome || ''));
+    return {
+      divergentes,
+      semLogin,
+      compartilhadosPendentes: compartilhados.filter(g => g.pendente),
+      compartilhadosAprovados: compartilhados.filter(g => !g.pendente)
+    };
+  }, [agendamentos, souAdmin]);
+
+  const alunosAcessoManual = useMemo(() => {
+    const termo = normalizarTexto(buscaAcessoManual);
+    if (!souAdmin || termo.length < 2) return [];
+    return agendamentos
+      .filter(a => normalizarTexto(a.nome).includes(termo) || selecaoAcessoManual.includes(a.id))
+      .sort((a, b) => (a.nome || '').localeCompare(b.nome || ''))
+      .slice(0, 40);
+  }, [agendamentos, buscaAcessoManual, selecaoAcessoManual, souAdmin]);
+
+  const chamarApiAcesso = async (corpo) => {
+    const idToken = await usuario.getIdToken();
+    const resposta = await fetch('/api/alunos/unificar-acesso', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify(corpo)
+    });
+    const dados = await resposta.json().catch(() => ({}));
+    if (!resposta.ok) {
+      const erro = new Error(dados?.erro || 'Não consegui corrigir agora. Tente de novo em instantes.');
+      erro.codigo = dados?.codigo;
+      throw erro;
+    }
+    return dados;
+  };
+
+  // Busca o e-mail/último login das contas envolvidas (só as que ainda não foram buscadas),
+  // pra você saber qual login o aluno realmente usa antes de escolher qual manter.
+  useEffect(() => {
+    if (!souAdmin || !painelAcessoAberto) return;
+    const uids = new Set();
+    gruposAcessoPortal.divergentes.forEach(g => g.uids.forEach(u => uids.add(u)));
+    gruposAcessoPortal.compartilhadosPendentes.forEach(g => uids.add(g.uid));
+    gruposAcessoPortal.compartilhadosAprovados.forEach(g => uids.add(g.uid));
+    agendamentos.filter(a => selecaoAcessoManual.includes(a.id) && a.uid).forEach(a => uids.add(a.uid));
+    const faltando = [...uids].filter(u => !uidsConsultadosRef.current.has(u));
+    if (faltando.length === 0) return;
+    faltando.forEach(u => uidsConsultadosRef.current.add(u));
+    chamarApiAcesso({ acao: 'consultar', uids: faltando })
+      .then(dados => setContasLogin(prev => ({ ...prev, ...(dados.contas || {}) })))
+      .catch(err => {
+        faltando.forEach(u => uidsConsultadosRef.current.delete(u));
+        console.error('Erro ao consultar contas de login:', err);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [souAdmin, painelAcessoAberto, gruposAcessoPortal, selecaoAcessoManual]);
+
+  // Conta sugerida quando há mais de uma: a que fez login mais recentemente.
+  const contaSugerida = (uids) => {
+    if (uids.length <= 1) return uids[0] || '';
+    return [...uids].sort((a, b) =>
+      new Date(contasLogin[b]?.ultimoLogin || 0) - new Date(contasLogin[a]?.ultimoLogin || 0)
+    )[0];
+  };
+
+  const unificarAcesso = async (chave, itens, { silencioso = false } = {}) => {
+    const uids = [...new Set(itens.map(i => i.uid).filter(Boolean))];
+    const escolha = escolhaAcesso[chave] || {};
+    const modoNova = uids.length === 0 || escolha.modo === 'nova';
+    const corpo = { acao: 'unificar', agendamentoIds: itens.map(i => i.id) };
+    if (modoNova) {
+      const email = (escolha.email || '').trim();
+      if (!email) {
+        setMensagemAcesso({ tipo: 'erro', texto: `${itens[0].nome}: informe o e-mail de login do aluno.` });
+        return false;
+      }
+      corpo.email = email;
+      corpo.senha = escolha.senha || '';
+    } else {
+      corpo.uid = escolha.uid || contaSugerida(uids);
+    }
+    setCorrigindoAcesso(chave);
+    try {
+      let d;
+      try {
+        d = await chamarApiAcesso(corpo);
+      } catch (errPrimeira) {
+        if (errPrimeira.codigo !== 'COMPARTILHADO' || silencioso) throw errPrimeira;
+        if (!window.confirm(`${errPrimeira.message}\n\nOK = aprovar o mesmo e-mail pra esses alunos (cada um vê as aulas de todos nesse login).`)) {
+          setMensagemAcesso({ tipo: 'erro', texto: `${itens[0].nome}: nada foi alterado.` });
+          return false;
+        }
+        d = await chamarApiAcesso({ ...corpo, confirmarCompartilhado: true });
+      }
+      if (!silencioso) {
+        const partes = [`${d.aulasCorrigidas} aula(s)`];
+        if (d.presencasCorrigidas) partes.push(`${d.presencasCorrigidas} presença(s)`);
+        if (d.avaliacoesCorrigidas) partes.push(`${d.avaliacoesCorrigidas} avaliação(ões)`);
+        setMensagemAcesso({
+          tipo: 'ok',
+          texto: `${itens[0].nome}: ${partes.join(', ')} ligada(s) ao mesmo login${d.contaCriada ? ' (conta nova criada)' : ''}${d.compartilhado ? ' — e-mail compartilhado aprovado' : ''}. Agora todas aparecem no portal.`
+        });
+      }
+      setEscolhaAcesso(prev => { const novo = { ...prev }; delete novo[chave]; return novo; });
+      if (chave === 'manual') { setSelecaoAcessoManual([]); setBuscaAcessoManual(''); }
+      return true;
+    } catch (err) {
+      setMensagemAcesso({ tipo: 'erro', texto: `${itens[0].nome}: ${err.message}` });
+      return false;
+    } finally {
+      setCorrigindoAcesso(null);
+    }
+  };
+
+  // Corrige de uma vez só os casos sem dúvida: mesmo nome + mesmo telefone, e só UMA
+  // conta de login envolvida (as outras aulas só estavam sem uid).
+  const corrigirCasosClaros = async () => {
+    const claros = gruposAcessoPortal.divergentes.filter(g => g.obvio);
+    if (claros.length === 0) return;
+    if (!window.confirm(`Ligar ao login certo as aulas de ${claros.length} aluno(s) (mesmo nome + telefone, só uma conta de login)? Nada é apagado.`)) return;
+    let ok = 0;
+    for (const g of claros) {
+      if (await unificarAcesso(g.chave, g.itens, { silencioso: true })) ok += 1;
+    }
+    setMensagemAcesso({
+      tipo: ok === claros.length ? 'ok' : 'erro',
+      texto: `${ok} de ${claros.length} aluno(s) corrigido(s).${ok < claros.length ? ' Os que falharam continuam na lista — tente um por um.' : ''}`
+    });
+  };
+
+  const aprovarCompartilhamento = async (grupo) => {
+    setCorrigindoAcesso(`comp-${grupo.uid}`);
+    try {
+      await Promise.all(grupo.itens
+        .filter(i => i.compartilhamentoAprovado !== true)
+        .map(i => updateDoc(doc(db, 'agendamentos', i.id), { compartilhamentoAprovado: true })));
+      setMensagemAcesso({ tipo: 'ok', texto: `E-mail compartilhado aprovado: ${grupo.alunos.map(a => a[0].nome).join(', ')}.` });
+    } catch (err) {
+      console.error('Erro ao aprovar e-mail compartilhado:', err);
+      setMensagemAcesso({ tipo: 'erro', texto: 'Erro ao salvar a aprovação. Tente novamente.' });
+    } finally {
+      setCorrigindoAcesso(null);
+    }
+  };
+
+  // Tira UM aluno do login compartilhado (as aulas dele ficam sem login — nada é apagado).
+  const tirarDoEmailCompartilhado = async (grupo, aulasDoAluno) => {
+    const nome = aulasDoAluno[0].nome;
+    if (!window.confirm(`Tirar ${nome} deste e-mail? As aulas dele continuam cadastradas, só ficam sem login — depois defina um e-mail próprio em "Alunos sem login".`)) return;
+    setCorrigindoAcesso(`comp-${grupo.uid}`);
+    try {
+      await chamarApiAcesso({ acao: 'desvincular', agendamentoIds: aulasDoAluno.map(i => i.id) });
+      setMensagemAcesso({ tipo: 'ok', texto: `${nome} saiu desse e-mail. Ele aparece agora em "Alunos sem login".` });
+    } catch (err) {
+      setMensagemAcesso({ tipo: 'erro', texto: `${nome}: ${err.message}` });
+    } finally {
+      setCorrigindoAcesso(null);
+    }
+  };
+
+  const renderCompartilhado = (grupo) => {
+    const conta = contasLogin[grupo.uid];
+    const ocupado = corrigindoAcesso !== null;
+    return (
+      <div key={grupo.uid} className={`bg-white border rounded-lg p-3 space-y-2 ${grupo.pendente ? 'border-amber-200' : 'border-slate-200'}`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <p className="text-xs font-bold text-slate-800">
+            {conta ? (conta.email || 'sem e-mail') : 'carregando…'}
+            <span className="font-normal text-slate-500"> · {grupo.alunos.length} alunos neste e-mail</span>
+          </p>
+          {grupo.pendente && (
+            <button
+              onClick={() => aprovarCompartilhamento(grupo)}
+              disabled={ocupado}
+              className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium transition inline-flex items-center gap-1 shrink-0"
+            >
+              <CheckCircle className="w-3.5 h-3.5" /> {corrigindoAcesso === `comp-${grupo.uid}` ? 'Salvando…' : 'Aprovar e-mail compartilhado'}
+            </button>
+          )}
+        </div>
+        {grupo.alunos.map(aulas => (
+          <div key={aulas[0].id} className="bg-slate-50 border border-slate-200 rounded px-2 py-1.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="text-xs">
+              <p className="font-medium text-slate-700">
+                {aulas[0].nome}{aulas[0].telefone ? ` · ${aulas[0].telefone}` : ''}
+                {grupo.pendente && aulas.some(i => i.compartilhamentoAprovado !== true) && (
+                  <span className="ml-1.5 text-[10px] font-semibold uppercase bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">novo</span>
+                )}
+              </p>
+              {aulas.map(item => <p key={item.id} className="text-slate-500">{descreverAula(item)}</p>)}
+            </div>
+            <button
+              onClick={() => tirarDoEmailCompartilhado(grupo, aulas)}
+              disabled={ocupado}
+              className="bg-white hover:bg-red-50 disabled:opacity-50 border border-red-200 text-red-600 px-2.5 py-1 rounded text-xs font-medium transition shrink-0"
+            >
+              Tirar deste e-mail
+            </button>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const descreverAula = (item) =>
+    `${LOCALIZACOES.find(l => l.id === item.local)?.nome || item.local || 'Sem polo'} · ${item.instrumento || '—'} · ${formatarHorario({ ...item, dia: diaDoAgendamento(item) })}`;
+
+  const formatarDataCurta = (iso) => {
+    if (!iso) return 'nunca entrou';
+    const d = new Date(iso);
+    return isNaN(d) ? '—' : d.toLocaleDateString('pt-BR');
+  };
+
+  // Bloco "qual login manter" — usado nos casos detectados e na correção manual.
+  const renderEscolhaConta = (chave, itens) => {
+    const uids = [...new Set(itens.map(i => i.uid).filter(Boolean))];
+    const escolha = escolhaAcesso[chave] || {};
+    const modoNova = uids.length === 0 || escolha.modo === 'nova';
+    const uidAtual = escolha.uid || contaSugerida(uids);
+    const atualizar = (campos) => setEscolhaAcesso(prev => ({ ...prev, [chave]: { ...(prev[chave] || {}), ...campos } }));
+    const ocupado = corrigindoAcesso !== null;
+    return (
+      <div className="space-y-2">
+        {uids.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold uppercase text-slate-500">Login que vai ficar com todas as aulas</p>
+            {uids.map(uid => {
+              const conta = contasLogin[uid];
+              const qtd = itens.filter(i => i.uid === uid).length;
+              return (
+                <label key={uid} className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name={`conta-${chave}`}
+                    checked={!modoNova && uidAtual === uid}
+                    onChange={() => atualizar({ modo: 'conta', uid })}
+                  />
+                  <span>
+                    <span className="font-medium">{conta ? (conta.inexistente ? 'conta apagada' : conta.email || 'sem e-mail') : 'carregando…'}</span>
+                    <span className="text-slate-400"> · último acesso: {conta && !conta.inexistente ? formatarDataCurta(conta.ultimoLogin) : '—'} · {qtd} aula(s) nesta conta</span>
+                  </span>
+                </label>
+              );
+            })}
+            <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+              <input type="radio" name={`conta-${chave}`} checked={modoNova} onChange={() => atualizar({ modo: 'nova' })} />
+              <span>Usar outro e-mail (cria a conta se não existir)</span>
+            </label>
+          </div>
+        )}
+        {modoNova && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input
+              type="email"
+              placeholder="E-mail de login do aluno"
+              value={escolha.email || ''}
+              onChange={(e) => atualizar({ email: e.target.value })}
+              className="px-2.5 py-1.5 border border-slate-300 rounded text-xs"
+            />
+            <input
+              type="text"
+              placeholder="Senha (mín. 6) — opcional se o e-mail já tem conta"
+              value={escolha.senha || ''}
+              onChange={(e) => atualizar({ senha: e.target.value })}
+              className="px-2.5 py-1.5 border border-slate-300 rounded text-xs"
+            />
+          </div>
+        )}
+        <button
+          onClick={() => unificarAcesso(chave, itens)}
+          disabled={ocupado || itens.length === 0}
+          className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium transition inline-flex items-center gap-1"
+        >
+          <KeyRound className="w-3.5 h-3.5" />
+          {corrigindoAcesso === chave ? 'Corrigindo…' : (modoNova && uids.length === 0 ? 'Criar acesso e ligar as aulas' : 'Ligar todas as aulas a este login')}
+        </button>
+      </div>
+    );
+  };
+
   // Instrumentos que realmente têm turma cadastrada no polo escolhido (grade vem do Firestore agora)
   const instrumentosDoPolo = INSTRUMENTOS.filter(inst =>
     turmasCadastradas.some(t => t.local === poloSelecionado && t.instrumento === inst.id)
@@ -3749,6 +4140,15 @@ export default function App() {
   // Agendamentos do próprio aluno logado (as regras do Firestore já garantem
   // que "agendamentos" só traz os dele quando não é admin, mas filtramos de novo por clareza)
   const meusAgendamentos = usuario ? agendamentos.filter(item => item.uid === usuario.uid) : [];
+  // E-mail compartilhado (irmãos, pai com filhos): o mesmo login pode ter mais de um aluno.
+  const nomesNoMeuLogin = Array.from(new Map(
+    meusAgendamentos.filter(i => normalizarTexto(i.nome)).map(i => [normalizarTexto(i.nome), i.nome.trim()])
+  ).values());
+  const loginCompartilhado = nomesNoMeuLogin.length > 1;
+  const saudacaoPortal = nomesNoMeuLogin.length > 1
+    ? `${nomesNoMeuLogin.slice(0, -1).join(', ')} e ${nomesNoMeuLogin[nomesNoMeuLogin.length - 1]}`
+    : (nomesNoMeuLogin[0] || 'aluno(a)');
+  const meusInstrumentos = new Set(meusAgendamentos.map(i => i.instrumento));
 
   // Igreja logada no Portal da Igreja e os alunos do polo que ela mantém — as regras do
   // Firestore já garantem que "agendamentos" só traz os alunos daquele polo pra essa
@@ -4314,6 +4714,175 @@ export default function App() {
                 </div>
               )}
             </div>
+
+            {souAdmin && (() => {
+              const { divergentes, semLogin, compartilhadosPendentes, compartilhadosAprovados } = gruposAcessoPortal;
+              const claros = divergentes.filter(g => g.obvio).length;
+              const temProblema = divergentes.length > 0 || compartilhadosPendentes.length > 0;
+              return (
+                <div className={`p-4 rounded-xl border space-y-3 ${temProblema ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <KeyRound className={`w-5 h-5 shrink-0 ${temProblema ? 'text-amber-600' : 'text-slate-500'}`} />
+                      <div>
+                        <h3 className={`text-sm font-bold ${temProblema ? 'text-amber-900' : 'text-slate-700'}`}>Acesso ao Portal do Aluno</h3>
+                        <p className="text-xs text-slate-600">
+                          {divergentes.length > 0
+                            ? `${divergentes.length} aluno(s) com aula que não aparece no portal`
+                            : 'Nenhum aluno com aula fora do portal'}
+                          {compartilhadosPendentes.length > 0 ? ` · ${compartilhadosPendentes.length} e-mail(s) compartilhado(s) aguardando aprovação` : ''}
+                          {semLogin.length > 0 ? ` · ${semLogin.length} aluno(s) ainda sem login` : ''}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { setPainelAcessoAberto(v => !v); setMensagemAcesso(null); }}
+                      className="bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition inline-flex items-center gap-1 shrink-0"
+                    >
+                      <ChevronDown className={`w-3.5 h-3.5 transition ${painelAcessoAberto ? 'rotate-180' : ''}`} />
+                      {painelAcessoAberto ? 'Fechar' : 'Revisar e corrigir'}
+                    </button>
+                  </div>
+
+                  {painelAcessoAberto && (
+                    <div className="space-y-4">
+                      <p className="text-xs text-slate-600">
+                        O portal mostra só as aulas ligadas ao login do aluno. Quando o mesmo aluno tem uma aula sem login (ex.: veio da migração/planilha) ou com outro login (cadastrou 2 vezes com e-mails diferentes), essa aula some do portal dele. Corrigir aqui só liga as aulas ao login certo — nada é apagado, e presenças e avaliações vão junto.
+                      </p>
+
+                      {mensagemAcesso && (
+                        <div className={`text-xs p-2.5 rounded border ${mensagemAcesso.tipo === 'ok' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                          {mensagemAcesso.texto}
+                        </div>
+                      )}
+
+                      {compartilhadosPendentes.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-xs font-bold text-slate-700 uppercase">E-mail compartilhado — aguardando aprovação</p>
+                          <p className="text-xs text-slate-500">
+                            Alunos diferentes entraram com o mesmo e-mail (irmãos, pai com filhos, banda). Eles já estão usando — aprove se estiver tudo certo, ou tire do e-mail quem não devia estar ali.
+                          </p>
+                          {compartilhadosPendentes.map(renderCompartilhado)}
+                        </div>
+                      )}
+
+                      {divergentes.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <p className="text-xs font-bold text-slate-700 uppercase">Aulas fora do portal (mesmo aluno)</p>
+                            {claros > 0 && (
+                              <button
+                                onClick={corrigirCasosClaros}
+                                disabled={corrigindoAcesso !== null}
+                                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium transition inline-flex items-center gap-1"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" /> Corrigir os {claros} caso(s) claro(s) de uma vez
+                              </button>
+                            )}
+                          </div>
+                          {divergentes.map(g => (
+                            <div key={g.chave} className="bg-white border border-amber-200 rounded-lg p-3 space-y-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-xs font-bold text-slate-800">{g.itens[0].nome}{g.itens[0].telefone ? ` · ${g.itens[0].telefone}` : ''}</p>
+                                {g.uids.length > 1 && <span className="text-[10px] font-semibold uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded">{g.uids.length} logins diferentes</span>}
+                                {g.semUid > 0 && <span className="text-[10px] font-semibold uppercase bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">{g.semUid} aula(s) sem login</span>}
+                                {!g.claro && <span className="text-[10px] font-semibold uppercase bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">confira: telefone faltando</span>}
+                              </div>
+                              <div className="space-y-1">
+                                {g.itens.map(item => (
+                                  <div key={item.id} className="text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1.5 text-slate-600 flex justify-between gap-2">
+                                    <span>{descreverAula(item)}</span>
+                                    <span className={`shrink-0 ${item.uid ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                      {item.uid ? (contasLogin[item.uid]?.email || 'com login') : 'sem login'}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                              {renderEscolhaConta(g.chave, g.itens)}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-2">
+                        <p className="text-xs font-bold text-slate-700 uppercase">Correção manual</p>
+                        <p className="text-xs text-slate-500">
+                          Para quando o nome ou telefone foi digitado diferente em cada aula (e por isso não apareceu acima), ou para colocar 2 ou mais alunos no mesmo e-mail. Busque, marque as aulas e escolha o login — se forem alunos diferentes, o sistema pede sua confirmação.
+                        </p>
+                        <input
+                          type="text"
+                          placeholder="Buscar aluno pelo nome (ex.: Abner)"
+                          value={buscaAcessoManual}
+                          onChange={(e) => setBuscaAcessoManual(e.target.value)}
+                          className="w-full sm:w-80 px-2.5 py-1.5 border border-slate-300 rounded text-xs"
+                        />
+                        {alunosAcessoManual.length > 0 && (
+                          <div className="space-y-1 max-h-64 overflow-y-auto">
+                            {alunosAcessoManual.map(item => (
+                              <label key={item.id} className="flex items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1.5 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={selecaoAcessoManual.includes(item.id)}
+                                  onChange={(e) => setSelecaoAcessoManual(prev => e.target.checked ? [...prev, item.id] : prev.filter(id => id !== item.id))}
+                                />
+                                <span className="text-slate-700 font-medium">{item.nome}</span>
+                                <span className="text-slate-500">{descreverAula(item)}</span>
+                                <span className={`ml-auto shrink-0 ${item.uid ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                  {item.uid ? (contasLogin[item.uid]?.email || 'com login') : 'sem login'}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                        {normalizarTexto(buscaAcessoManual).length >= 2 && alunosAcessoManual.length === 0 && (
+                          <p className="text-xs text-slate-400">Nenhum aluno com esse nome.</p>
+                        )}
+                        {selecaoAcessoManual.length > 0 &&
+                          renderEscolhaConta('manual', agendamentos.filter(a => selecaoAcessoManual.includes(a.id)))}
+                      </div>
+
+                      {compartilhadosAprovados.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-bold text-slate-700 uppercase">E-mails compartilhados aprovados ({compartilhadosAprovados.length})</p>
+                            <button onClick={() => setMostrarCompartilhadosAprovados(v => !v)} className="text-xs text-emerald-700 hover:underline">
+                              {mostrarCompartilhadosAprovados ? 'Esconder' : 'Mostrar'}
+                            </button>
+                          </div>
+                          {mostrarCompartilhadosAprovados && compartilhadosAprovados.map(renderCompartilhado)}
+                        </div>
+                      )}
+
+                      {semLogin.length > 0 && (
+                        <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-bold text-slate-700 uppercase">Alunos sem login ({semLogin.length})</p>
+                            <button
+                              onClick={() => setMostrarSemLogin(v => !v)}
+                              className="text-xs text-emerald-700 hover:underline"
+                            >
+                              {mostrarSemLogin ? 'Esconder' : 'Mostrar'}
+                            </button>
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            Esses alunos não conseguem entrar no portal (nenhuma aula deles tem login). Defina um e-mail e senha pra liberar — todas as aulas do aluno ficam no mesmo login.
+                          </p>
+                          {mostrarSemLogin && semLogin.map(g => (
+                            <div key={g.chave} className="border border-slate-200 rounded-lg p-2.5 space-y-2">
+                              <p className="text-xs font-bold text-slate-800">{g.itens[0].nome}{g.itens[0].telefone ? ` · ${g.itens[0].telefone}` : ''}</p>
+                              {g.itens.map(item => (
+                                <p key={item.id} className="text-xs text-slate-500">{descreverAula(item)}</p>
+                              ))}
+                              {renderEscolhaConta(g.chave, g.itens)}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {gruposDuplicados.length > 0 && (
               <div className="bg-red-50 border border-red-200 p-4 rounded-xl space-y-3">
@@ -7737,7 +8306,7 @@ export default function App() {
               <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-emerald-500 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800">
-                    Olá, {meusAgendamentos[0]?.nome || 'aluno(a)'}!
+                    Olá, {saudacaoPortal}!
                   </h2>
                   <p className="text-sm text-slate-500 mt-1">{usuario.email}</p>
                 </div>
@@ -7766,6 +8335,9 @@ export default function App() {
                   <div className="lg:col-span-1 space-y-4">
                     {meusAgendamentos.map((item) => (
                       <div key={item.id} className="bg-emerald-800 text-white rounded-xl shadow-sm p-5">
+                        {loginCompartilhado && (
+                          <p className="text-sm font-bold text-white mb-1">{item.nome}</p>
+                        )}
                         <div className="flex items-center text-emerald-200 mb-1 gap-2 text-xs font-semibold uppercase tracking-wide">
                           <MapPin className="w-4 h-4" /> {LOCALIZACOES.find(l => l.id === item.local)?.nome}
                         </div>
@@ -7852,7 +8424,7 @@ export default function App() {
                     </h3>
                     <div className="space-y-3">
                       {materiaisCadastrados
-                        .filter((mat) => mat.instrumento === 'todos' || mat.instrumento === meusAgendamentos[0]?.instrumento)
+                        .filter((mat) => mat.instrumento === 'todos' || meusInstrumentos.has(mat.instrumento))
                         .map((mat) => (
                           <a
                             key={mat.id}
@@ -7869,7 +8441,7 @@ export default function App() {
                           </a>
                         ))}
                     </div>
-                    {materiaisCadastrados.filter((mat) => mat.instrumento === 'todos' || mat.instrumento === meusAgendamentos[0]?.instrumento).length === 0 && (
+                    {materiaisCadastrados.filter((mat) => mat.instrumento === 'todos' || meusInstrumentos.has(mat.instrumento)).length === 0 && (
                       <p className="text-xs text-slate-400 mt-4">
                         Nenhum material disponível ainda — a coordenação ainda vai subir o conteúdo aqui.
                       </p>
